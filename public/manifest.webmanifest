@@ -1,0 +1,12 @@
+{
+  "name": "国科大选课规划",
+  "short_name": "选课规划",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F4F7F6",
+  "theme_color": "#163E4A",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "/branding/ucas-favicon.png?v=2", "sizes": "160x160", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
