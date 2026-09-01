@@ -27,6 +27,34 @@ describe('周课表教学周选择器', () => {
     wrapper.unmount()
   })
 
+  it('将存在时间冲突的教学周标红，并在选中时保持红色', async () => {
+    const entries = [
+      { id: 'entry-a', courseId: 'course-a', offeringId: null },
+      { id: 'entry-b', courseId: 'course-b', offeringId: null },
+    ]
+    store.planEntries = entries
+    store.formalEntries = entries
+    store.index.courses.set('course-a', { term: 'fall', name: '课程 A', baseCode: 'A', credits: 2 })
+    store.index.courses.set('course-b', { term: 'fall', name: '课程 B', baseCode: 'B', credits: 2 })
+    store.conflicts = [{ entryA: 'entry-a', entryB: 'entry-b', weekday: 1, periods: [1, 2], weeks: [3, 21] }]
+
+    const wrapper = mount(SchedulePage)
+    const weekButtons = wrapper.findAll('.week-dots button')
+
+    expect(weekButtons.at(2)?.classes()).toContain('conflict')
+    expect(weekButtons.at(20)?.classes()).toContain('conflict')
+    expect(weekButtons.at(2)?.attributes('aria-label')).toContain('存在时间冲突')
+
+    await weekButtons.at(20)?.trigger('click')
+    expect(weekButtons.at(20)?.classes()).toEqual(expect.arrayContaining(['active', 'conflict']))
+
+    wrapper.unmount()
+    store.planEntries = []
+    store.formalEntries = []
+    store.conflicts = []
+    store.index.courses.clear()
+  })
+
   it('打印时克隆当前预览，确保预览与 PDF 使用同一份页面结构', async () => {
     const entry = { id: 'entry-1', courseId: 'course-1', offeringId: 'offering-1', bucket: 'formal', isDegreeCourse: true, approvalState: 'approved', isRetake: false }
     store.profile = { name: '测试学生', studentId: '20260001', trainingUnit: '计算机学院', major: '计算机应用技术', category: 'academic_master' }

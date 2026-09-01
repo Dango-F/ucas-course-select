@@ -304,7 +304,7 @@ async function exportPlan(message: Extract<ExportMessage, { action: 'export' }>)
 
   const footerRow = notesRow + 2
   sheet.mergeCells(footerRow, 1, footerRow, 7)
-  sheet.getCell(footerRow, 1).value = `中国科学院大学 · 选课规划工具　${message.generatedDate}`
+  sheet.getCell(footerRow, 1).value = message.generatedDate
   sheet.getCell(footerRow, 1).alignment = { horizontal: 'right', vertical: 'middle' }
   sheet.mergeCells(footerRow + 1, 1, footerRow + 1, 7)
   sheet.getCell(footerRow + 1, 1).value = '1 - 1'

@@ -77,10 +77,10 @@ async function clearAllCourses() {
 
     <section v-if="rows.length" class="plan-list">
       <div v-if="conflictGroupCount" class="plan-group-label conflict-group-label"><AlertTriangle :size="17" /><div><strong>冲突课程</strong><span>{{ conflictGroupCount }} 组</span></div></div>
-      <div class="plan-catalog-head" aria-hidden="true"><span>课程与班级</span><span>培养归属</span><span>上课安排</span><span>教师</span><span>学分与操作</span></div>
+      <div class="plan-catalog-head" aria-hidden="true"><span>课程与班级</span><span>培养归属</span><span>上课安排/考核方式</span><span>教师</span><span>学分与操作</span></div>
       <template v-for="(group, groupIndex) in displayGroups" :key="`${group.kind}-${group.entryIds.join('-')}`">
         <section class="plan-course-group" :class="{ 'conflicted-group': group.kind === 'conflict', 'regular-course-group': group.kind === 'regular' }">
-          <header class="plan-subgroup-label" :class="{ 'conflict-subgroup-label': group.kind === 'conflict', 'regular-subgroup-label': group.kind === 'regular' }">
+          <header v-if="group.kind === 'conflict' || conflictGroupCount > 0" class="plan-subgroup-label" :class="{ 'conflict-subgroup-label': group.kind === 'conflict', 'regular-subgroup-label': group.kind === 'regular' }">
             <div v-if="group.kind === 'conflict'"><strong>冲突组 {{ String(groupIndex + 1).padStart(2, '0') }}</strong><span>{{ group.rows.length }} 门课程</span></div>
             <div v-else><strong>{{ tab === 'formal' ? '其他正式课程' : '其他备选课程' }}</strong></div>
           </header>
@@ -97,7 +97,7 @@ async function clearAllCourses() {
                   <p class="course-discipline"><b>所属学科：</b><span>{{ row.course.subject || '未标注' }}</span><b>{{ row.course.professionalProgramCourse ? '关联一级学科（推断）：' : '所属一级学科：' }}</b><span>{{ row.course.firstLevelDiscipline || '待确认' }}</span></p>
                 </div>
               </div>
-              <div class="course-time"><div v-if="row.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in row.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>暂不参与冲突判断</span></p></div>
+              <div class="course-time"><div v-if="row.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in row.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>暂不参与冲突判断</span></p><p class="course-exam"><b>考核方式</b><span>{{ row.offering?.examMethod || '待定' }}</span></p></div>
               <div class="course-staff"><p><b>主讲</b><span>{{ row.offering?.teachers.join('、') || '待定' }}</span></p><p v-if="row.offering?.leadProfessor"><b>首席</b><span>{{ row.offering.leadProfessor }}</span></p></div>
               <div class="plan-credit-actions">
                 <div class="plan-credit-display"><strong>{{ row.course.credits }}</strong><span>学分</span></div>

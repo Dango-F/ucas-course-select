@@ -53,6 +53,6 @@ const degreeCredits = computed(() => formalRows.value.filter((row) => row.degree
       </tfoot>
     </table>
 
-    <footer><p>中国科学院大学 · 选课规划工具　{{ generatedDate }}</p><span>1 - 1</span></footer>
+    <footer><p>{{ generatedDate }}</p><span>1 - 1</span></footer>
   </section>
 </template>

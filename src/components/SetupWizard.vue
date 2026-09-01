@@ -62,7 +62,7 @@ async function finish() {
       <div class="setup-constellation" aria-hidden="true"><i v-for="n in 7" :key="n" /></div>
       <img class="setup-logo" src="/branding/ucas-logo-horizontal-white.png" alt="中国科学院大学" />
       <p class="eyebrow">中国科学院大学 · 2026—2027</p>
-      <h1>中国科学院大学<br />研究生选课系统<span class="setup-version">v1.0.2</span></h1>
+      <h1>中国科学院大学<br />研究生选课系统<span class="setup-version">v1.0.4</span></h1>
       <p class="setup-description">要求按学生类别和学科归属确定；设置仅保存在本机，可随时修改。</p>
       <div class="privacy-note"><ShieldCheck :size="19" /><span>不登录学校账号<br />不上传个人选课数据</span></div>
     </section>

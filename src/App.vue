@@ -53,7 +53,7 @@ const stageCreditCurrent = computed(() => store.report?.stageCredits ?? 0)
     <aside class="sidebar" :class="{ open: mobileNavOpen }">
       <div class="brand">
         <img class="brand-logo" src="/branding/ucas-logo-horizontal-white.png" alt="中国科学院大学" />
-        <div class="brand-meta"><span>UCAS · 2026</span><div class="brand-title-line"><strong>选课规划</strong><em>v1.0.2</em></div></div>
+        <div class="brand-meta"><span>UCAS · 2026</span><div class="brand-title-line"><strong>选课规划</strong><em>v1.0.4</em></div></div>
         <button class="icon-button sidebar-close" aria-label="关闭导航" @click="mobileNavOpen = false"><X :size="20" /></button>
       </div>
 

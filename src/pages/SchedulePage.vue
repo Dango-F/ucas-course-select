@@ -54,6 +54,7 @@ const activeConflicts = computed(() => store.conflicts.filter((conflict) => {
   const course = entry ? store.index.courses.get(entry.courseId) : null
   return course?.term === store.activeTerm
 }))
+const conflictWeeks = computed(() => new Set(activeConflicts.value.flatMap((conflict) => conflict.weeks)))
 const conflictIds = computed(() => new Set(activeConflicts.value.flatMap((conflict) => [conflict.entryA, conflict.entryB])))
 const conflictGroups = computed<ConflictGroup[]>(() => {
   const groups: Array<{ entryIds: string[]; conflicts: CourseConflict[] }> = []
@@ -240,7 +241,7 @@ onBeforeUnmount(cleanupSchedulePrint)
       </div>
     </section>
 
-    <div class="week-dots" :style="{ '--week-count': weekCount }" aria-label="快速切换教学周"><button v-for="week in weekCount" :key="week" :class="{ active: selectedWeek === week }" @click="selectedWeek = week">{{ week }}</button></div>
+    <div class="week-dots" :style="{ '--week-count': weekCount }" aria-label="快速切换教学周"><button v-for="week in weekCount" :key="week" :class="{ active: selectedWeek === week, conflict: conflictWeeks.has(week) }" :aria-label="`第 ${week} 教学周${conflictWeeks.has(week) ? '，存在时间冲突' : ''}`" :title="conflictWeeks.has(week) ? `第 ${week} 教学周存在时间冲突` : `切换到第 ${week} 教学周`" @click="selectedWeek = week">{{ week }}</button></div>
 
     <section v-if="store.activeTerm === 'spring' && !store.catalog.termConfig.spring.hasSchedule" class="spring-schedule-note"><CalendarOff :size="25" /><div><strong>春季详细排课尚未导入</strong><p>课程仍可加入方案和计算学分；导入含“星期节次”的春季课表后，此处会自动生成周课表。</p></div></section>
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isVisibleForOwnDiscipline, ownDisciplineCoursePriority, ownDisciplinePlanPriority } from '../src/domain/catalogFilters'
+import { isOwnDisciplineForPlanDisplay, isVisibleForOwnDiscipline, ownDisciplineCoursePriority, ownDisciplinePlanPriority } from '../src/domain/catalogFilters'
 import type { Course, StudentProfile } from '../src/types'
 
 const profile: StudentProfile = {
@@ -84,13 +84,28 @@ describe('课程目录本学科筛选', () => {
     expect(rows.map((item) => item.name)).toEqual(['高级人工智能', '英语B', '中国马克思主义与当代', '学术道德与学术写作规范-通论'])
   })
 
-  it('选课方案保留只看本学科的排序，并把已选的非本学科课程放在最后', () => {
+  it('选课方案使用独立的展示归属判断，并按七类课程顺序排序', () => {
+    const own = course('数据挖掘')
+    const nonOwn = course('物理学专题', { subject: '物理学', firstLevelDiscipline: '物理学' })
+    const sports = course('体育专项', { attribute: '公共选修课', subject: '体育学', firstLevelDiscipline: '体育学' })
+    const publicElective = course('科技写作', { attribute: '公共选修课', subject: '计算机科学与技术' })
+    const publicCompulsory = course('新时代中国特色社会主义理论与实践', { attribute: '公共必修课', department: '马克思主义学院', level: '硕士课程', firstLevelDiscipline: '马克思主义理论' })
+    expect(isVisibleForOwnDiscipline(profile, nonOwn)).toBe(false)
+    expect(isOwnDisciplineForPlanDisplay(profile, own)).toBe(true)
+    expect(isOwnDisciplineForPlanDisplay(profile, nonOwn)).toBe(false)
+
     const rows = [
       course('学术道德与学术写作规范-通论', { attribute: '公共必修课', department: '公共政策与管理学院' }),
       course('英语A', { attribute: '公共必修课', department: '外语系', level: '硕士课程' }),
-      course('物理学专题', { subject: '物理学', firstLevelDiscipline: '物理学' }),
-      course('数据挖掘'),
+      publicCompulsory,
+      publicElective,
+      sports,
+      nonOwn,
+      own,
     ].sort((left, right) => ownDisciplinePlanPriority(profile, left) - ownDisciplinePlanPriority(profile, right))
-    expect(rows.map((item) => item.name)).toEqual(['数据挖掘', '物理学专题', '英语A', '学术道德与学术写作规范-通论'])
+    expect(rows.map((item) => item.name)).toEqual([
+      '数据挖掘', '物理学专题', '体育专项', '科技写作', '英语A',
+      '新时代中国特色社会主义理论与实践', '学术道德与学术写作规范-通论',
+    ])
   })
 })

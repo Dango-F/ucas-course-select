@@ -78,12 +78,14 @@ function termLabel(term: Term) {
       </div>
 
       <div class="summary-carousel-footer">
-        <button class="summary-carousel-control" :disabled="pages.length < 2" aria-label="上一页课程" @click="movePage(-1)"><ChevronLeft :size="16" /></button>
-        <div class="summary-carousel-dots" aria-label="选择课程页">
-          <button v-for="(page, pageIndex) in pages" :key="pageIndex" class="summary-carousel-dot" :class="{ active: currentPage === pageIndex }" :aria-label="`查看第 ${pageIndex + 1} 页课程`" :aria-current="currentPage === pageIndex ? 'page' : undefined" @click="selectPage(pageIndex)" />
+        <div class="summary-carousel-pager">
+          <button class="summary-carousel-control" :disabled="pages.length < 2" aria-label="上一页课程" @click="movePage(-1)"><ChevronLeft :size="16" /></button>
+          <div class="summary-carousel-dots" aria-label="选择课程页">
+            <button v-for="(page, pageIndex) in pages" :key="pageIndex" class="summary-carousel-dot" :class="{ active: currentPage === pageIndex }" :aria-label="`查看第 ${pageIndex + 1} 页课程`" :aria-current="currentPage === pageIndex ? 'page' : undefined" @click="selectPage(pageIndex)" />
+          </div>
+          <button class="summary-carousel-control" :disabled="pages.length < 2" aria-label="下一页课程" @click="movePage(1)"><ChevronRight :size="16" /></button>
         </div>
         <span class="summary-carousel-position">{{ pageRange }} / {{ rows.length }}</span>
-        <button class="summary-carousel-control" :disabled="pages.length < 2" aria-label="下一页课程" @click="movePage(1)"><ChevronRight :size="16" /></button>
       </div>
     </div>
     <div v-else class="summary-empty"><p>正式方案还是空的</p><span>从课程目录加入课程后，这里会显示学分与冲突。</span></div>

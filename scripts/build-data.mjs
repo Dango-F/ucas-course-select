@@ -30,6 +30,7 @@ const splitMulti = (value) => text(value).split(/[；;\n、]/).map((item) => ite
 const uniq = (items) => [...new Set(items.filter(Boolean))]
 const disciplineCodeKey = (code) => text(code).toUpperCase().match(/^\d{6}([0-9A-Z]{4})/)?.[1] ?? ''
 const isEnglishACourseName = (name) => /^英语A(?:$|[-—_（(])/.test(text(name).normalize('NFKC').replace(/\s+/g, ''))
+const inferPlanLevel = (name) => /^硕士学位英语.*慕课/.test(text(name).normalize('NFKC').replace(/\s+/g, '')) ? '硕士课程' : ''
 const inferFirstLevelDisciplines = (courses) => {
   const candidates = new Map()
   const codeCandidates = new Map()
@@ -170,11 +171,13 @@ function parsePlanSheet(sheet, term) {
     const code = text(row.getCell(3).value)
     if (!code) continue
     sourceStats[statKey] += 1
+    const name = text(row.getCell(4).value)
     ensureCourse(term, code, {
-      name: text(row.getCell(4).value),
+      name,
       department: text(row.getCell(2).value),
       campuses: [text(row.getCell(5).value)],
       attribute: text(row.getCell(7).value),
+      level: inferPlanLevel(name),
       subject: text(row.getCell(8).value),
       hours: num(row.getCell(9).value),
       credits: num(row.getCell(10).value),
