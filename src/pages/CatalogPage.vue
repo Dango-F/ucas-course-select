@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BookmarkPlus, Check, Copy, Filter, Search, SlidersHorizontal } from 'lucide-vue-next'
+import { BookmarkPlus, Check, Copy, Filter, Search, SlidersHorizontal, Trash2 } from 'lucide-vue-next'
 import CourseDrawer from '../components/CourseDrawer.vue'
 import PageHeader from '../components/PageHeader.vue'
+import { isVisibleForOwnDiscipline, ownDisciplineCoursePriority } from '../domain/catalogFilters'
 import { usePlannerStore } from '../stores/planner'
 import type { CourseChoice, PlanStatus } from '../types'
 
 const store = usePlannerStore()
-const FILTER_STORAGE_KEY = 'ucas-course-catalog-filters-v1'
+const FILTER_STORAGE_KEY = 'ucas-course-catalog-filters-v3'
 type CatalogFilterState = { query: string; attribute: string; campus: string; level: string; disciplineOnly: boolean }
 
 function readFilters(): CatalogFilterState {
-  const fallback: CatalogFilterState = { query: '', attribute: '', campus: '', level: '', disciplineOnly: false }
+  const fallback: CatalogFilterState = { query: '', attribute: '', campus: '雁栖湖', level: '', disciplineOnly: true }
   try {
     const parsed = JSON.parse(sessionStorage.getItem(FILTER_STORAGE_KEY) || 'null') as Partial<CatalogFilterState> | null
-    return { ...fallback, ...parsed, disciplineOnly: Boolean(parsed?.disciplineOnly) }
+    return { ...fallback, ...parsed, disciplineOnly: typeof parsed?.disciplineOnly === 'boolean' ? parsed.disciplineOnly : fallback.disciplineOnly }
   } catch {
     return fallback
   }
@@ -40,7 +41,7 @@ const levels = computed(() => [...new Set(store.choices.map((choice) => choice.c
 
 const filtered = computed(() => {
   const keywords = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  return store.choices.filter((choice) => {
+  const matches = store.choices.filter((choice) => {
     const { course, offering } = choice
     const text = `${offering?.name ?? ''} ${course.name} ${course.englishName} ${course.baseCode} ${offering?.offeringCode ?? ''} ${course.department} ${course.level} ${offering?.teachers.join(' ') ?? ''} ${offering?.leadProfessor ?? ''} ${offering?.examMethod ?? ''}`.toLowerCase()
     if (keywords.some((keyword) => !text.includes(keyword))) return false
@@ -48,14 +49,13 @@ const filtered = computed(() => {
     if (campus.value && !course.campuses.includes(campus.value) && offering?.campus !== campus.value && !offering?.meetings.some((meeting) => meeting.room.includes(campus.value))) return false
     if (level.value && course.level !== level.value) return false
     if (disciplineOnly.value && store.profile) {
-      const profile = store.profile
-      const match = profile.programKind === 'academic'
-        ? course.firstLevelDiscipline === profile.discipline || course.sharedFirstLevels.includes(profile.discipline) || course.subject === profile.discipline
-        : course.subject === profile.discipline || course.sharedSubjects.includes(profile.discipline)
-      if (!match) return false
+      if (!isVisibleForOwnDiscipline(store.profile, course, offering)) return false
     }
     return true
   })
+  return disciplineOnly.value && store.profile
+    ? matches.sort((left, right) => ownDisciplineCoursePriority(store.profile!, left.course, left.offering) - ownDisciplineCoursePriority(store.profile!, right.course, right.offering))
+    : matches
 })
 
 const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / itemHeight.value) - 4))
@@ -69,7 +69,16 @@ function onScroll(event: Event) {
 }
 
 function alreadyAdded(choice: CourseChoice) {
-  return store.planEntries.some((entry) => entry.courseId === choice.course.id && entry.offeringId === (choice.offering?.id ?? null))
+  return Boolean(planEntryForChoice(choice))
+}
+
+function planEntryForChoice(choice: CourseChoice) {
+  return store.planEntries.find((entry) => entry.courseId === choice.course.id && entry.offeringId === (choice.offering?.id ?? null))
+}
+
+async function removeChoice(choice: CourseChoice) {
+  const entry = planEntryForChoice(choice)
+  if (entry) await store.removeEntry(entry.id)
 }
 
 async function add(choice: CourseChoice, status: PlanStatus) {
@@ -167,11 +176,11 @@ watch([query, attribute, campus, level, disciplineOnly], saveFilters, { flush: '
               </div>
               <div class="course-meta-row"><span>{{ choice.course.department }}</span><strong class="course-credits">{{ choice.course.credits }} <i>学分</i></strong></div>
             </div>
-            <div class="course-taxonomy"><div><span>{{ choice.course.attribute }}</span><span class="level-tag">{{ choice.course.level || '层次待定' }}</span><span v-if="choice.course.professionalProgramCourse" class="pro-tag">专业学位适用</span><span v-if="choice.course.isBenYan" class="b-tag">本研层次</span></div><p>{{ choice.course.firstLevelDiscipline || choice.course.subject || '归属待确认' }}</p></div>
+            <div class="course-taxonomy"><div><span>{{ choice.course.attribute }}</span><span class="level-tag">{{ choice.course.level || '层次待定' }}</span><span v-if="choice.course.professionalProgramCourse" class="pro-tag">专业学位适用</span><span v-if="choice.course.isBenYan" class="b-tag">本研层次</span></div><p class="course-discipline"><b>一级学科：</b><span>{{ choice.course.firstLevelDiscipline || choice.course.subject || '归属待确认' }}</span></p></div>
           </div>
           <div class="course-time"><div v-if="choice.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in choice.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>可加入方案，暂不参与冲突判断</span></p></div>
           <div class="course-staff"><p><b>主讲</b><span>{{ choice.offering?.teachers.join('、') || '待定' }}</span></p><p v-if="choice.offering?.leadProfessor"><b>首席</b><span>{{ choice.offering.leadProfessor }}</span></p><div class="seat-status" :class="{ full: remainingSeats(choice) === 0 }"><span v-if="choice.offering?.capacity">名额 {{ choice.offering.enrolled }} / {{ choice.offering.capacity }}</span><span v-else>容量待定</span><strong v-if="remainingSeats(choice) !== null">{{ remainingSeats(choice) ? `余 ${remainingSeats(choice)}` : '已满' }}</strong></div></div>
-          <div class="course-actions"><template v-if="alreadyAdded(choice)"><span class="added"><Check :size="16" /> 已加入</span></template><template v-else><button class="icon-action" title="加入备选" @click="add(choice, 'backup')"><BookmarkPlus :size="18" /></button><button class="button small primary" :disabled="Boolean(store.formalAddBlockReason(choice))" :title="store.formalAddBlockReason(choice) || undefined" @click="add(choice, 'formal')">加入方案</button></template></div>
+          <div class="course-actions"><template v-if="alreadyAdded(choice)"><span class="added"><Check :size="16" /> 已加入</span><button class="icon-action danger-ghost" title="取消选课" :aria-label="`取消${choice.offering?.name || choice.course.name}`" @click.stop="removeChoice(choice)"><Trash2 :size="18" /></button></template><template v-else><button class="icon-action" title="加入备选" @click="add(choice, 'backup')"><BookmarkPlus :size="18" /></button><button class="button small primary" :disabled="Boolean(store.formalAddBlockReason(choice))" :title="store.formalAddBlockReason(choice) || undefined" @click="add(choice, 'formal')">加入方案</button></template></div>
         </article>
       </div>
       <div v-if="!filtered.length" class="catalog-empty"><Search :size="28" /><strong>没有匹配课程</strong><p>放宽筛选条件，或检查当前学期。</p><button class="button secondary" @click="clearFilters">清除筛选</button></div>

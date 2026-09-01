@@ -1,15 +1,42 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, Trash2 } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, Printer, Trash2, X } from 'lucide-vue-next'
 import PageHeader from '../components/PageHeader.vue'
+import ScheduleTable from '../components/ScheduleTable.vue'
+import { categoryLabels } from '../domain/requirements'
+import { vFitScheduleCard } from '../directives/fitScheduleCard'
 import { usePlannerStore } from '../stores/planner'
-import type { Course, CourseConflict, CourseOffering, Meeting, PlanEntry } from '../types'
+import type { Course, CourseConflict, CourseOffering, Meeting, PlanEntry, ScheduleExportRow, TranscriptIdentity } from '../types'
 
 const store = usePlannerStore()
 const selectedWeek = ref(1)
+const scheduleExportOpen = ref(false)
+const scheduleExportWorking = ref(false)
+const scheduleExportError = ref('')
+const schedulePreviewRef = ref<HTMLElement | null>(null)
 const weekCount = computed(() => Math.max(1, store.catalog.termConfig[store.activeTerm]?.weeks || 20))
 const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const times = ['8:30–9:15', '9:20–10:05', '10:25–11:10', '11:15–12:00', '13:30–14:15', '14:20–15:05', '15:25–16:10', '16:15–17:00', '17:05–17:50', '18:30–19:15', '19:20–20:05', '20:15–21:00', '21:05–21:50']
+const generatedDate = computed(() => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date()))
+const scheduleTermLabel = computed(() => store.catalog.termConfig[store.activeTerm]?.label || (store.activeTerm === 'fall' ? '2026 秋季' : '2027 春季'))
+const scheduleFileTerm = computed(() => store.activeTerm === 'fall' ? '2026秋' : '2027春')
+const scheduleIdentity = computed<TranscriptIdentity>(() => {
+  const profile = store.profile
+  return {
+    name: profile?.name.trim() ?? '', studentId: profile?.studentId.trim() ?? '', trainingUnit: profile?.trainingUnit.trim() ?? '',
+    category: profile ? categoryLabels[profile.category] : '', major: profile?.major.trim() ?? '',
+  }
+})
+
+function safeFilePart(value: string) {
+  return value.trim().replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '') || '未填写'
+}
+
+const scheduleFileStem = computed(() => {
+  const profile = store.profile
+  const unit = profile?.trainingUnit.trim().replace(/^中国科学院大学/, '') || profile?.trainingUnit || '未填写'
+  return ['国科大课表总表', safeFilePart(profile?.studentId ?? ''), safeFilePart(profile?.name ?? ''), safeFilePart(profile?.major ?? ''), safeFilePart(unit), scheduleFileTerm.value].join('_')
+})
 
 const weekLabel = computed(() => {
   if (store.activeTerm !== 'fall') return `第 ${selectedWeek.value} 教学周`
@@ -55,6 +82,40 @@ const conflictGroups = computed<ConflictGroup[]>(() => {
     }),
   }))
 })
+
+function scheduleRowOrder(row: ScheduleExportRow): [number, number, string] {
+  const firstMeeting = row.meetings[0]
+  return [firstMeeting?.weekday ?? 99, firstMeeting ? Math.min(...firstMeeting.periods) : 99, row.name]
+}
+
+const scheduleRows = computed<ScheduleExportRow[]>(() => store.formalEntries.flatMap((entry) => {
+  const course = store.index.courses.get(entry.courseId)
+  if (!course || course.term !== store.activeTerm) return []
+  const offering = entry.offeringId ? store.index.offerings.get(entry.offeringId) ?? null : null
+  const remaining = offering?.capacity ? Math.max(0, offering.capacity - offering.enrolled) : null
+  return [{
+    sequence: 0,
+    term: course.term,
+    name: offering?.name || course.name,
+    courseCode: offering?.offeringCode || course.baseCode,
+    attribute: course.attribute,
+    level: course.level,
+    hours: course.hours,
+    credits: course.credits,
+    degreeLabel: entry.isDegreeCourse ? `学位课${entry.approvalState === 'pending' ? '·待确认' : ''}` : '普通课程',
+    teachers: offering?.teachers.join('、') || '',
+    leadProfessor: offering?.leadProfessor || '',
+    campus: offering?.campus || course.campuses.join('、'),
+    capacityLabel: offering?.capacity ? `名额 ${offering.enrolled} / ${offering.capacity} · 余 ${remaining}` : '容量待定',
+    teachingMethod: offering?.teachingMethod || '',
+    examMethod: offering?.examMethod || '',
+    meetings: offering?.meetings ?? [],
+    conflict: conflictIds.value.has(entry.id),
+  }]
+}).sort((left, right) => {
+  const leftOrder = scheduleRowOrder(left); const rightOrder = scheduleRowOrder(right)
+  return leftOrder[0] - rightOrder[0] || leftOrder[1] - rightOrder[1] || leftOrder[2].localeCompare(rightOrder[2], 'zh-CN')
+}).map((row, index) => ({ ...row, sequence: index + 1 })))
 
 function meetingsOverlap(left: Meeting, right: Meeting) {
   return left.weekday === right.weekday && left.periods.some((period) => right.periods.includes(period))
@@ -120,12 +181,43 @@ const blocks = computed<ScheduleBlock[]>(() => {
 
 function changeWeek(delta: number) { selectedWeek.value = Math.min(weekCount.value, Math.max(1, selectedWeek.value + delta)) }
 async function removeScheduleEntry(entryId: string) { await store.removeEntry(entryId) }
+
+function openScheduleExport() { scheduleExportError.value = ''; scheduleExportOpen.value = true }
+function closeScheduleExport() { if (!scheduleExportWorking.value) scheduleExportOpen.value = false }
+
+let schedulePrintOriginalTitle = ''
+let schedulePrintClone: HTMLElement | null = null
+function cleanupSchedulePrint() {
+  document.body.classList.remove('schedule-printing')
+  schedulePrintClone?.remove()
+  schedulePrintClone = null
+  if (schedulePrintOriginalTitle) { document.title = schedulePrintOriginalTitle; schedulePrintOriginalTitle = '' }
+}
+
+async function printSchedule() {
+  if (!scheduleRows.value.length) { scheduleExportError.value = '当前学期没有正式方案课程。'; return }
+  await nextTick()
+  const preview = schedulePreviewRef.value?.querySelector<HTMLElement>('.schedule-table-print')
+  if (!preview) { scheduleExportError.value = '课表预览尚未生成，请关闭后重新打开。'; return }
+  schedulePrintClone?.remove()
+  schedulePrintClone = preview.cloneNode(true) as HTMLElement
+  schedulePrintClone.classList.add('schedule-print-clone')
+  schedulePrintClone.setAttribute('aria-hidden', 'true')
+  document.body.appendChild(schedulePrintClone)
+  document.body.classList.add('schedule-printing')
+  schedulePrintOriginalTitle = document.title
+  document.title = scheduleFileStem.value
+  window.addEventListener('afterprint', cleanupSchedulePrint, { once: true })
+  window.print()
+}
+
+onBeforeUnmount(cleanupSchedulePrint)
 </script>
 
 <template>
   <div class="page schedule-page">
       <PageHeader eyebrow="WEEKLY SCHEDULE" title="周课表" description="间断周、周末补课和多时段安排会按实际教学周展开。">
-      <div class="week-control"><button class="icon-button" :disabled="selectedWeek === 1" @click="changeWeek(-1)"><ChevronLeft :size="18" /></button><strong>{{ weekLabel }}</strong><button class="icon-button" :disabled="selectedWeek === weekCount" @click="changeWeek(1)"><ChevronRight :size="18" /></button></div>
+      <div class="schedule-header-actions"><button class="button secondary" @click="openScheduleExport"><Printer :size="17" /> 导出课表总表</button><div class="week-control"><button class="icon-button" :disabled="selectedWeek === 1" @click="changeWeek(-1)"><ChevronLeft :size="18" /></button><strong>{{ weekLabel }}</strong><button class="icon-button" :disabled="selectedWeek === weekCount" @click="changeWeek(1)"><ChevronRight :size="18" /></button></div></div>
     </PageHeader>
 
     <section v-if="conflictGroups.length" class="schedule-conflict-board">
@@ -160,13 +252,34 @@ async function removeScheduleEntry(entryId: string) { await store.removeEntry(en
           <div class="time-label" :style="{ gridColumn: 1, gridRow: period + 1 }"><strong>{{ period }}</strong><span>{{ times[period - 1] }}</span></div>
           <div v-for="day in 7" :key="`${period}-${day}`" class="schedule-cell" :style="{ gridColumn: day + 1, gridRow: period + 1 }" />
         </template>
-        <article v-for="block in blocks" :key="block.entry.id + block.meeting.rawWeeks + block.meeting.rawTime" class="schedule-block" :class="{ conflict: block.conflict, degree: block.entry.isDegreeCourse, 'has-lanes': block.laneCount > 1 }" :style="{ gridColumn: block.meeting.weekday + 1, gridRow: `${block.start + 1} / span ${block.span}`, '--lane': block.lane, '--lanes': block.laneCount }">
-          <strong>{{ block.offering.name || block.course.name }}</strong><span>{{ block.meeting.rawTime }}</span><small>{{ block.meeting.room || '教室待定' }}</small>
+        <article v-for="block in blocks" :key="block.entry.id + block.meeting.rawWeeks + block.meeting.rawTime" v-fit-schedule-card="{ minScale: 0.32, maxScale: 1.16 }" class="schedule-block" :class="{ conflict: block.conflict, degree: block.entry.isDegreeCourse, 'has-lanes': block.laneCount > 1 }" :style="{ gridColumn: block.meeting.weekday + 1, gridRow: `${block.start + 1} / span ${block.span}`, '--lane': block.lane, '--lanes': block.laneCount }" :title="`${block.offering.name || block.course.name}｜${block.offering.offeringCode || block.course.baseCode}｜主讲：${block.offering.teachers.join('、') || '待定'}｜首席：${block.offering.leadProfessor || '待定'}｜考核：${block.offering.examMethod || '待定'}｜${block.meeting.rawTime}｜${block.meeting.room || '教室待定'}`">
+          <div class="schedule-card-fit-content schedule-block-content">
+            <span v-if="block.entry.isDegreeCourse" class="schedule-block-degree-label">学位课</span>
+            <strong class="schedule-card-fit-title">{{ block.offering.name || block.course.name }}</strong>
+            <code class="schedule-card-fit-code">{{ block.offering.offeringCode || block.course.baseCode }}</code>
+            <span class="schedule-card-fit-meta">{{ block.meeting.rawTime }} · {{ block.meeting.room || '教室待定' }}</span>
+            <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>主讲</b><span>{{ block.offering.teachers.join('、') || '待定' }}</span></small>
+            <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>首席</b><span>{{ block.offering.leadProfessor || '待定' }}</span></small>
+            <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>考核</b><span>{{ block.offering.examMethod || '待定' }}</span></small>
+          </div>
           <div class="schedule-block-actions"><AlertTriangle v-if="block.conflict" :size="14" /><button class="schedule-remove-button" type="button" :aria-label="`从正式方案删除${block.offering.name || block.course.name}`" title="从正式方案删除" @click.stop="removeScheduleEntry(block.entry.id)"><Trash2 :size="14" /></button></div>
         </article>
       </div>
       <div v-if="!blocks.length" class="schedule-empty-overlay"><CalendarOff :size="28" /><strong>本周没有正式课程</strong><span>切换教学周，或从课程目录加入正式方案。</span></div>
     </section>
     <div class="schedule-legend"><span><i class="normal" />普通课程</span><span><i class="degree" />学位课</span><span><i class="conflict" />时间冲突</span></div>
+
+    <Teleport to="body">
+      <div v-if="scheduleExportOpen" class="schedule-export-layer" role="dialog" aria-modal="true" aria-label="课表总表导出预览">
+        <header class="schedule-export-header">
+          <div><p class="section-kicker">SCHEDULE TABLE</p><h2>课表总表</h2><span>{{ scheduleTermLabel }} · 仅显示正式方案 · {{ scheduleRows.length }} 门课程</span></div>
+          <div class="schedule-export-header-actions"><button class="button primary" :disabled="scheduleExportWorking" @click="printSchedule"><Printer :size="17" /> 打印 / 另存为 PDF</button><button class="icon-button" aria-label="关闭总表预览" title="关闭" :disabled="scheduleExportWorking" @click="closeScheduleExport"><X :size="20" /></button></div>
+        </header>
+        <div class="schedule-export-content">
+          <div v-if="scheduleExportError" class="schedule-export-error"><AlertTriangle :size="17" />{{ scheduleExportError }}</div>
+          <div ref="schedulePreviewRef" class="schedule-table-preview"><ScheduleTable :identity="scheduleIdentity" :rows="scheduleRows" :term-label="scheduleTermLabel" :generated-date="generatedDate" /></div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

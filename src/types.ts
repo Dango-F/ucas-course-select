@@ -24,6 +24,7 @@ export interface StudentProfile {
   category: StudentCategory
   programKind: ProgramKind
   discipline: string
+  professionalField?: string
   campusPreference: string
   english: EnglishPlan
   createdAt: string
@@ -75,6 +76,26 @@ export interface CourseOffering {
   leadProfessor: string
   teachers: string[]
   meetings: Meeting[]
+}
+
+export interface ScheduleExportRow {
+  sequence: number
+  term: Term
+  name: string
+  courseCode: string
+  attribute: string
+  level: string
+  hours: number
+  credits: number
+  degreeLabel: string
+  teachers: string
+  leadProfessor: string
+  campus: string
+  capacityLabel: string
+  teachingMethod: string
+  examMethod: string
+  meetings: Meeting[]
+  conflict: boolean
 }
 
 export interface CatalogStats {

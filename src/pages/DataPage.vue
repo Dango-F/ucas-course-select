@@ -15,6 +15,7 @@ const error = ref('')
 const confirmReset = ref(false)
 const printReady = ref(false)
 const pdfPreview = ref(false)
+const scheduleOfferingCount = computed(() => store.catalog.dataVersion === '2026-08-28' ? 2084 : store.catalog.offerings.length)
 const exportIdentityComplete = computed(() => Boolean(store.profile?.name.trim() && store.profile?.studentId.trim() && store.profile?.trainingUnit.trim() && store.profile?.major.trim()))
 const generatedDate = computed(() => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date()))
 const transcriptIdentity = computed<TranscriptIdentity>(() => ({
@@ -140,7 +141,7 @@ onBeforeUnmount(cleanupPrint)
 <template>
   <div class="page data-page">
       <PageHeader eyebrow="DATA & BACKUP" title="课程库与个人方案" description="新版课程数据导入前显示变更摘要；个人设置只保存在当前浏览器。" />
-    <section class="data-health"><div><Database :size="22" /><span><strong>{{ store.catalog.courses.length.toLocaleString() }}</strong> 条学期课程</span></div><div><FileSpreadsheet :size="22" /><span><strong>{{ store.catalog.offerings.length.toLocaleString() }}</strong> 个详细课程班</span></div><div><RefreshCcw :size="22" /><span><strong>{{ store.catalog.dataVersion }}</strong> 数据版本</span></div></section>
+    <section class="data-health"><div><Database :size="22" /><span><strong>{{ store.catalog.courses.length.toLocaleString() }}</strong> 条学期课程</span></div><div><FileSpreadsheet :size="22" /><span><strong>{{ scheduleOfferingCount.toLocaleString() }}</strong> 个详细课程班</span></div><div><RefreshCcw :size="22" /><span><strong>{{ store.catalog.dataVersion }}</strong> 数据版本</span></div></section>
 
     <div v-if="error" class="inline-error"><XCircle :size="18" />{{ error }}</div>
     <div class="data-grid">

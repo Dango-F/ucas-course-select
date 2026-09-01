@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { BookMarked, CalendarClock, CheckCircle2, ClipboardCheck, MapPin, UsersRound, X } from 'lucide-vue-next'
-import { isDisciplineMatch } from '../domain/requirements'
+import { isAcademicEthicsCourseForProfile, isDisciplineMatch } from '../domain/requirements'
 import { usePlannerStore } from '../stores/planner'
 import type { CourseChoice } from '../types'
 
 const props = defineProps<{ choice: CourseChoice | null }>()
 defineEmits<{ close: []; add: [status: 'formal' | 'backup'] }>()
 const store = usePlannerStore()
-const matches = computed(() => props.choice && store.profile ? isDisciplineMatch(store.profile, props.choice.course) : false)
+const isAcademicEthics = computed(() => Boolean(props.choice && /^学术道德与学术写作规范/.test(props.choice.course.name.normalize('NFKC').replace(/\s+/g, ''))))
+const matches = computed(() => {
+  if (!props.choice || !store.profile) return false
+  return isAcademicEthics.value
+    ? isAcademicEthicsCourseForProfile(store.profile, props.choice.course)
+    : isDisciplineMatch(store.profile, props.choice.course)
+})
+const matchNote = computed(() => {
+  if (isAcademicEthics.value) return matches.value ? '按通论/本院系规则匹配' : '通论须由公共政策与管理学院开设，分论须由本院系开设'
+  return matches.value ? '与当前培养归属匹配' : '需要导师或培养单位确认后才能计为学位课'
+})
 const formalBlockReason = computed(() => props.choice ? store.formalAddBlockReason(props.choice) : null)
 const attendanceNote = computed(() => Boolean(props.choice && /人文系列讲座|科学前沿讲座/.test(props.choice.course.name)))
 </script>
@@ -26,7 +36,7 @@ const attendanceNote = computed(() => Boolean(props.choice && /人文系列讲�
         <section class="drawer-section">
           <h3><BookMarked :size="18" /> 培养归属</h3>
           <dl><div><dt>所属学科</dt><dd>{{ choice.course.subject || '未标注' }}</dd></div><div><dt>所属一级学科</dt><dd>{{ choice.course.firstLevelDiscipline || '未标注' }}</dd></div><div><dt>共享学科</dt><dd>{{ choice.course.sharedSubjects.join('、') || '无' }}</dd></div></dl>
-          <p class="match-note" :class="{ yes: matches }"><CheckCircle2 :size="16" />{{ matches ? '与当前培养归属匹配' : '需要导师或培养单位确认后才能计为学位课' }}</p>
+          <p class="match-note" :class="{ yes: matches }"><CheckCircle2 :size="16" />{{ matchNote }}</p>
         </section>
         <section class="drawer-section">
           <h3><CalendarClock :size="18" /> 排课信息</h3>

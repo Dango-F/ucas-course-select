@@ -3,11 +3,13 @@ import { computed } from 'vue'
 import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, CircleAlert } from 'lucide-vue-next'
 import PageHeader from '../components/PageHeader.vue'
 import MathMotif from '../components/MathMotif.vue'
+import { buildOverviewRequirementItems } from '../domain/overview'
 import { categoryLabels } from '../domain/requirements'
 import { usePlannerStore } from '../stores/planner'
 
 const store = usePlannerStore()
 const report = computed(() => store.report)
+const overviewRequirements = computed(() => buildOverviewRequirementItems(report.value?.items ?? []))
 const passed = computed(() => report.value?.items.filter((item) => item.status === 'passed').length ?? 0)
 const englishSummary = computed(() => {
   const plan = store.profile?.english
@@ -38,7 +40,7 @@ const upcoming = computed(() => store.formalEntries.slice(0, 5).flatMap((entry) 
       <section class="panel requirement-list-panel">
         <header class="panel-heading"><div><span>培养要求</span><h2>当前缺口</h2></div><RouterLink to="/requirements">查看全部 <ArrowRight :size="15" /></RouterLink></header>
         <div class="compact-requirements">
-          <div v-for="item in report?.items.slice(0, 7)" :key="item.key" :class="item.status">
+          <div v-for="item in overviewRequirements" :key="item.key" :class="item.status">
             <component :is="item.status === 'passed' ? CheckCircle2 : CircleAlert" :size="19" />
             <span><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></span>
             <b>{{ item.current.toFixed(item.unit === '学分' ? 1 : 0) }} / {{ item.target }} {{ item.unit }}</b>

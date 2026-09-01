@@ -14,7 +14,12 @@ const studentId = ref(props.initialProfile?.studentId ?? '')
 const trainingUnit = ref(props.initialProfile?.trainingUnit ?? '')
 const major = ref(props.initialProfile?.major ?? props.initialProfile?.discipline ?? '')
 const category = ref<StudentCategory>(props.initialProfile?.category ?? 'academic_master')
-const discipline = ref(props.initialProfile?.discipline ?? '')
+const initialDiscipline = props.initialProfile?.discipline ?? ''
+const discipline = ref(store.catalog.disciplines.includes(initialDiscipline) ? initialDiscipline : '')
+const professionalField = ref(
+  props.initialProfile?.professionalField
+    ?? (props.initialProfile?.programKind === 'professional' && store.catalog.professionalFields.includes(initialDiscipline) ? initialDiscipline : ''),
+)
 const campus = ref(props.initialProfile?.campusPreference ?? '雁栖湖')
 const masterMethod = ref<MasterEnglishMethod>(props.initialProfile?.english.masterMethod ?? 'offline')
 
@@ -22,12 +27,14 @@ const categories = Object.entries(categoryLabels) as Array<[StudentCategory, str
 const isProfessional = computed(() => ['engineering_master', 'engineering_doctor', 'professional_master'].includes(category.value))
 const needsMasterEnglish = computed(() => ['academic_master', 'engineering_master', 'professional_master', 'direct_doctor'].includes(category.value))
 const needsDoctorEnglish = computed(() => ['ordinary_doctor', 'engineering_doctor', 'direct_doctor'].includes(category.value))
-const disciplineOptions = computed(() => isProfessional.value ? store.catalog.professionalFields : store.catalog.disciplines)
+const disciplineOptions = computed(() => store.catalog.disciplines)
+const professionalFieldOptions = computed(() => store.catalog.professionalFields)
 const identityComplete = computed(() => Boolean(name.value.trim() && studentId.value.trim() && trainingUnit.value.trim() && major.value.trim()))
 
 function chooseCategory(value: StudentCategory) {
+  const wasProfessional = isProfessional.value
   category.value = value
-  discipline.value = ''
+  if (wasProfessional && !isProfessional.value) professionalField.value = ''
 }
 
 async function finish() {
@@ -40,6 +47,7 @@ async function finish() {
     category: category.value,
     programKind: isProfessional.value ? 'professional' : 'academic',
     discipline: discipline.value,
+    professionalField: isProfessional.value ? professionalField.value : '',
     campusPreference: campus.value,
     english: { masterMethod: needsMasterEnglish.value ? masterMethod.value : 'not_applicable', doctorEnglishRequired: needsDoctorEnglish.value },
     createdAt: props.initialProfile?.createdAt ?? new Date().toISOString(),
@@ -73,7 +81,7 @@ async function finish() {
           <label class="field-label"><span>姓名</span><input v-model="name" autocomplete="name" placeholder="请输入姓名" /></label>
           <label class="field-label"><span>学号</span><input v-model="studentId" inputmode="numeric" autocomplete="off" placeholder="请输入学号" /></label>
           <label class="field-label full"><span>培养单位</span><input v-model="trainingUnit" autocomplete="organization" placeholder="例如：中国科学院大学计算机科学与技术学院" /></label>
-          <label class="field-label full"><span>所学专业</span><input v-model="major" autocomplete="off" placeholder="例如：计算机应用技术" /><small>用于身份展示和导出选课单；课程匹配仍按后续选择的一级学科或专业学位类别 / 领域判断。</small></label>
+          <label class="field-label full"><span>所学专业</span><input v-model="major" autocomplete="off" placeholder="例如：计算机应用技术" /><small>用于身份展示和导出选课单；“只看本学科”按后续选择的一级学科筛选。</small></label>
         </div>
       </div>
 
@@ -89,11 +97,16 @@ async function finish() {
 
       <div v-else-if="step === 2" class="setup-panel">
         <p class="section-kicker">课程归属</p>
-        <h2>{{ isProfessional ? '选择专业学位类别 / 领域' : '选择一级学科' }}</h2>
+        <h2>选择一级学科</h2>
         <label class="field-label">
-          <span>{{ isProfessional ? '类别或领域' : '一级学科' }}</span>
+          <span>一级学科</span>
           <select v-model="discipline"><option value="" disabled>请选择</option><option v-for="item in disciplineOptions" :key="item" :value="item">{{ item }}</option></select>
-          <small>用于判断本学科核心课、专业课和共享课程。</small>
+          <small>所有学生类别均以一级学科作为“只看本学科”的筛选依据。</small>
+        </label>
+        <label v-if="isProfessional" class="field-label">
+          <span>专业学位类别 / 领域（选填）</span>
+          <select v-model="professionalField"><option value="">暂不选择</option><option v-for="item in professionalFieldOptions" :key="item" :value="item">{{ item }}</option></select>
+          <small>用于补充识别适用于该类别或领域的培养课程，不改变“只看本学科”的一级学科口径。</small>
         </label>
         <label class="field-label">
           <span>常用校区</span>

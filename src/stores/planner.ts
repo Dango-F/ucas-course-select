@@ -18,6 +18,24 @@ const emptyCatalog = (): Catalog => ({
   stats: { planFall: 0, planSpring: 0, coreFall: 0, coreSpring: 0, scheduleOfferings: 0, scheduleMeetings: 0 },
 })
 
+function normalizeStoredProfile(value: StudentProfile, catalog: Catalog): StudentProfile {
+  const legacyDiscipline = value.discipline ?? ''
+  const legacyProfessionalField = value.programKind === 'professional'
+    && !catalog.disciplines.includes(legacyDiscipline)
+    && catalog.professionalFields.includes(legacyDiscipline)
+      ? legacyDiscipline
+      : ''
+  return {
+    ...value,
+    name: value.name ?? '',
+    studentId: value.studentId ?? '',
+    trainingUnit: value.trainingUnit ?? '',
+    major: value.major ?? legacyDiscipline,
+    discipline: legacyProfessionalField ? '' : legacyDiscipline,
+    professionalField: value.professionalField ?? legacyProfessionalField,
+  }
+}
+
 type CourseSelectionIdentity = {
   courseCode: string
   offeringCode: string
@@ -89,7 +107,7 @@ export const usePlannerStore = defineStore('planner', () => {
     const base = await response.json() as Catalog
     catalog.value = normalizeCatalog(persisted?.customCatalog ?? base)
     if (persisted) {
-      profile.value = persisted.profile ? { ...persisted.profile, name: persisted.profile.name ?? '', studentId: persisted.profile.studentId ?? '', trainingUnit: persisted.profile.trainingUnit ?? '', major: persisted.profile.major ?? persisted.profile.discipline ?? '' } : null
+      profile.value = persisted.profile ? normalizeStoredProfile(persisted.profile, catalog.value) : null
       planEntries.value = persisted.planEntries ?? []
       completedCourses.value = persisted.completedCourses ?? []
       activeTerm.value = persisted.activeTerm ?? 'fall'
@@ -219,11 +237,11 @@ export const usePlannerStore = defineStore('planner', () => {
   async function applyImport(preview: ImportPreview) { catalog.value = mergeCatalog(catalog.value, preview); lastNotice.value = `已合并 ${preview.rowsRead} 行课程数据`; await persist() }
 
   async function restore(state: PersistedState) {
-    profile.value = state.profile ? { ...state.profile, name: state.profile.name ?? '', studentId: state.profile.studentId ?? '', trainingUnit: state.profile.trainingUnit ?? '', major: state.profile.major ?? state.profile.discipline ?? '' } : null
+    if (state.customCatalog) catalog.value = normalizeCatalog(state.customCatalog)
+    profile.value = state.profile ? normalizeStoredProfile(state.profile, catalog.value) : null
     planEntries.value = state.planEntries ?? []
     completedCourses.value = state.completedCourses ?? []
     activeTerm.value = state.activeTerm ?? 'fall'
-    if (state.customCatalog) catalog.value = normalizeCatalog(state.customCatalog)
     await persist()
   }
 

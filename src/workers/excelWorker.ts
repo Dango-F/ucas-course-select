@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import ExcelJS from 'exceljs'
 import { transcriptTermOrder } from '../domain/term'
-import type { Catalog, Course, CourseOffering, ImportPreview, Meeting, Term, TranscriptIdentity, TranscriptRow } from '../types'
+import type { Catalog, Course, CourseOffering, ImportPreview, Meeting, ScheduleExportRow, Term, TranscriptIdentity, TranscriptRow } from '../types'
 import { loadWorkbook } from './workbookLoader'
 
 type ImportMessage = {
@@ -12,7 +12,9 @@ type ImportMessage = {
   existingCourseIds: string[]
   existingOfferingIds: string[]
 }
-type ExportMessage = { action: 'export'; rows: TranscriptRow[]; identity: TranscriptIdentity; generatedDate: string }
+type ExportMessage =
+  | { action: 'export'; rows: TranscriptRow[]; identity: TranscriptIdentity; generatedDate: string }
+  | { action: 'export-schedule'; rows: ScheduleExportRow[]; identity: TranscriptIdentity; generatedDate: string; termLabel: string }
 const ENGLISH_A_HOURS = 64
 
 const valueText = (value: ExcelJS.CellValue): string => {
@@ -198,7 +200,7 @@ async function normalizeWorkbook(message: ImportMessage): Promise<ImportPreview>
   }
 }
 
-async function exportPlan(message: ExportMessage): Promise<ArrayBuffer> {
+async function exportPlan(message: Extract<ExportMessage, { action: 'export' }>): Promise<ArrayBuffer> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = '国科大选课规划'
   workbook.created = new Date()
@@ -339,11 +341,430 @@ async function exportPlan(message: ExportMessage): Promise<ArrayBuffer> {
   return Uint8Array.from(rawBuffer as Uint8Array).buffer
 }
 
+function scheduleMeetingText(meeting: Meeting) {
+  return `${meeting.rawTime}\n${meeting.rawWeeks} · ${meeting.room || '教室待定'}`
+}
+
+async function exportScheduleLegacy(message: Extract<ExportMessage, { action: 'export-schedule' }>): Promise<ArrayBuffer> {
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = '国科大选课规划'
+  workbook.created = new Date()
+
+  const sheet = workbook.addWorksheet('课表总表', { views: [{ showGridLines: false, zoomScale: 80 }] })
+  sheet.properties.defaultRowHeight = 24
+  sheet.columns = [6, 27, 17, 8, 8, 24, 43, 18, 21, 16].map((width) => ({ width }))
+  sheet.pageSetup = {
+    orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+    horizontalCentered: true,
+    margins: { left: 0.28, right: 0.28, top: 0.38, bottom: 0.42, header: 0.15, footer: 0.18 },
+  }
+
+  sheet.mergeCells('A1:J1')
+  const title = sheet.getCell('A1')
+  title.value = '研究生课表总表'
+  title.font = { name: '黑体', size: 21, bold: true, color: { argb: 'FF000000' } }
+  title.alignment = { horizontal: 'center', vertical: 'middle' }
+  sheet.getRow(1).height = 40
+
+  const richLabel = (label: string, value: string, size = 10.5) => ({
+    richText: [
+      { font: { name: '宋体', size, bold: true }, text: label },
+      { font: { name: '宋体', size }, text: value },
+    ],
+  })
+  sheet.mergeCells('A3:B3'); sheet.mergeCells('C3:D3'); sheet.mergeCells('E3:G3'); sheet.mergeCells('H3:J3')
+  sheet.mergeCells('A4:B4'); sheet.mergeCells('C4:E4'); sheet.mergeCells('F4:J4')
+  sheet.getCell('A3').value = richLabel('姓　　名：', message.identity.name)
+  sheet.getCell('C3').value = richLabel('学生类别：', message.identity.category)
+  sheet.getCell('E3').value = richLabel('培养单位：', message.identity.trainingUnit, 8.6)
+  sheet.getCell('H3').value = richLabel('学　　期：', message.termLabel)
+  sheet.getCell('A4').value = richLabel('学　　号：', message.identity.studentId)
+  sheet.getCell('C4').value = richLabel('所学专业：', message.identity.major)
+  sheet.getCell('F4').value = richLabel('统计范围：', '当前学期正式方案课程；备选池不计入课表')
+  for (const address of ['A3', 'C3', 'E3', 'H3', 'A4', 'C4', 'F4']) sheet.getCell(address).alignment = { vertical: 'middle', wrapText: false, shrinkToFit: address === 'E3' || address === 'F4' }
+  sheet.getRow(3).height = 23; sheet.getRow(4).height = 23
+
+  const totalCredits = message.rows.reduce((total, row) => total + row.credits, 0)
+  const degreeCount = message.rows.filter((row) => row.degreeLabel.startsWith('学位课')).length
+  const conflictCount = message.rows.filter((row) => row.conflict).length
+  sheet.mergeCells('A5:J5')
+  sheet.getCell('A5').value = `正式方案 ${message.rows.length} 门　·　总学分 ${totalCredits}　·　学位课 ${degreeCount} 门　·　时间冲突 ${conflictCount} 门`
+  sheet.getCell('A5').font = { name: '宋体', size: 10.5, bold: true, color: { argb: 'FF294F72' } }
+  sheet.getCell('A5').alignment = { horizontal: 'left', vertical: 'middle' }
+  sheet.getRow(5).height = 24
+
+  const headerRow = 6
+  const headers = ['序号', '课程与班级', '课程属性 / 层次', '学时', '学分', '教师与首席教授', '全部上课安排', '校区 / 名额', '授课 / 考核', '学位课 / 状态']
+  sheet.getRow(headerRow).values = headers
+  sheet.getRow(headerRow).height = 31
+
+  const dataStart = headerRow + 1
+  if (message.rows.length) {
+    message.rows.forEach((row, index) => {
+      const excelRow = dataStart + index
+      const meetingText = row.meetings.length ? row.meetings.map(scheduleMeetingText).join('\n') : '暂无详细排课'
+      sheet.getRow(excelRow).values = [
+        row.sequence, `${row.name}\n${row.courseCode}`, `${row.attribute || '属性待定'}\n${row.level || '层次待定'}`,
+        row.hours || null, row.credits, `主讲：${row.teachers || '待定'}\n首席：${row.leadProfessor || '待定'}`,
+        meetingText, `${row.campus || '校区待定'}\n${row.capacityLabel}`, `${row.teachingMethod || '授课方式待定'}\n${row.examMethod || '考核方式待定'}`,
+        `${row.degreeLabel}${row.conflict ? '\n有时间冲突' : ''}`,
+      ]
+      sheet.getRow(excelRow).height = Math.max(36, 25 + row.meetings.length * 22, row.name.length > 22 ? 52 : 0)
+    })
+  } else {
+    sheet.mergeCells(dataStart, 1, dataStart, 10)
+    sheet.getCell(dataStart, 1).value = '当前学期没有正式方案课程'
+    sheet.getCell(dataStart, 1).alignment = { horizontal: 'center', vertical: 'middle' }
+    sheet.getRow(dataStart).height = 32
+  }
+  const dataEnd = dataStart + Math.max(message.rows.length, 1) - 1
+
+  const notesRow = dataEnd + 2
+  sheet.mergeCells(notesRow, 1, notesRow, 10)
+  sheet.getCell(notesRow, 1).value = '备注：上课安排按导入数据的全部教学周、星期、节次和教室列出；春季在未导入详细课表时显示“暂无详细排课”。本表仅供课程规划，以培养方案、导师、培养单位及学校正式系统为准。'
+  sheet.getCell(notesRow, 1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true }
+  sheet.getCell(notesRow, 1).font = { name: '宋体', size: 9.5, color: { argb: 'FF333333' } }
+  sheet.getRow(notesRow).height = 38
+
+  const footerRow = notesRow + 2
+  sheet.mergeCells(footerRow, 1, footerRow, 10)
+  sheet.getCell(footerRow, 1).value = `中国科学院大学 · 选课规划工具　${message.generatedDate}`
+  sheet.getCell(footerRow, 1).alignment = { horizontal: 'right', vertical: 'middle' }
+  sheet.getCell(footerRow, 1).font = { name: '宋体', size: 9.5, color: { argb: 'FF333333' } }
+  sheet.mergeCells(footerRow + 1, 1, footerRow + 1, 10)
+  sheet.getCell(footerRow + 1, 1).value = '1 - 1'
+  sheet.getCell(footerRow + 1, 1).alignment = { horizontal: 'right', vertical: 'middle' }
+  sheet.getCell(footerRow + 1, 1).font = { name: '宋体', size: 9.5, color: { argb: 'FF333333' } }
+
+  const thin = { style: 'thin' as const, color: { argb: 'FF7C8790' } }
+  const medium = { style: 'medium' as const, color: { argb: 'FF202A29' } }
+  for (let row = headerRow; row <= dataEnd; row += 1) {
+    for (let column = 1; column <= 10; column += 1) {
+      const cell = sheet.getCell(row, column)
+      cell.font = { name: '宋体', size: row === headerRow ? 10 : 9.5, bold: row === headerRow, color: { argb: 'FF000000' } }
+      cell.alignment = { horizontal: row === headerRow || column !== 2 ? 'center' : 'left', vertical: 'middle', wrapText: true }
+      cell.border = { top: row === headerRow ? medium : thin, bottom: row === dataEnd ? medium : thin, left: column === 1 ? medium : thin, right: column === 10 ? medium : thin }
+      if (row !== headerRow && message.rows[row - dataStart]?.conflict) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE7E5' } }
+    }
+  }
+  for (let column = 1; column <= 10; column += 1) {
+    sheet.getCell(notesRow, column).border = { top: thin, bottom: medium, left: column === 1 ? medium : thin, right: column === 10 ? medium : thin }
+  }
+  sheet.autoFilter = { from: `A${headerRow}`, to: `J${headerRow}` }
+  sheet.pageSetup.printArea = `A1:J${footerRow + 1}`
+  sheet.headerFooter.oddFooter = '&R第 &P 页 / 共 &N 页'
+
+  const rawBuffer = await workbook.xlsx.writeBuffer() as unknown
+  if (rawBuffer instanceof ArrayBuffer) return rawBuffer
+  return Uint8Array.from(rawBuffer as Uint8Array).buffer
+}
+
+const scheduleWeekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+const schedulePeriodTimes = [
+  '8:30–9:15', '9:20–10:05', '10:25–11:10', '11:15–12:00',
+  '13:30–14:15', '14:20–15:05', '15:25–16:10', '16:15–17:00',
+  '17:05–17:50', '18:30–19:15', '19:20–20:05', '20:15–21:00', '21:05–21:50',
+]
+
+type WeeklyExportBlock = {
+  id: string
+  row: ScheduleExportRow
+  meeting: Meeting
+  weekday: number
+  start: number
+  span: number
+}
+
+function schedulePeriodRuns(periods: number[]) {
+  const ordered = uniq(periods.filter((period) => period >= 1 && period <= schedulePeriodTimes.length)).sort((left, right) => left - right)
+  const runs: number[][] = []
+  for (const period of ordered) {
+    const last = runs[runs.length - 1]
+    if (last && period === last[last.length - 1] + 1) last.push(period)
+    else runs.push([period])
+  }
+  return runs
+}
+
+function weeklyBlocksOverlap(left: WeeklyExportBlock, right: WeeklyExportBlock) {
+  return left.weekday === right.weekday && left.start < right.start + right.span && right.start < left.start + left.span
+}
+
+function buildWeeklyExportBlocks(rows: ScheduleExportRow[]) {
+  return rows.flatMap((row) => row.meetings.flatMap((meeting, meetingIndex) => {
+    if (meeting.weekday < 1 || meeting.weekday > scheduleWeekdays.length) return []
+    return schedulePeriodRuns(meeting.periods).map((run, runIndex) => ({
+      id: `${row.sequence}-${meetingIndex}-${runIndex}-${meeting.rawWeeks}-${meeting.rawTime}`,
+      row, meeting, weekday: meeting.weekday, start: run[0], span: run.length,
+    }))
+  }))
+}
+
+function weeklyBlockText(block: WeeklyExportBlock, continuation = false) {
+  const name = continuation ? `↳ ${block.row.name}` : block.row.name
+  const details = continuation
+    ? `${block.row.courseCode} · ${block.meeting.rawWeeks} · ${block.meeting.room || '教室待定'}`
+    : `${block.row.courseCode} · ${block.row.credits}学分\n${block.row.teachers || '教师待定'}\n${block.meeting.rawTime}\n${block.meeting.rawWeeks} · ${block.meeting.room || '教室待定'}`
+  return `${name}\n${details}`
+}
+
+async function exportSchedule(message: Extract<ExportMessage, { action: 'export-schedule' }>): Promise<ArrayBuffer> {
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = '国科大选课规划'
+  workbook.created = new Date()
+
+  const weeklySheet = workbook.addWorksheet('一周课表', { views: [{ showGridLines: false, zoomScale: 78 }] })
+  weeklySheet.properties.defaultRowHeight = 46
+  weeklySheet.columns = [13, 25, 25, 25, 25, 25, 25, 25].map((width) => ({ width }))
+  weeklySheet.pageSetup = {
+    orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 1,
+    horizontalCentered: true,
+    margins: { left: 0.22, right: 0.22, top: 0.34, bottom: 0.38, header: 0.12, footer: 0.16 },
+  }
+
+  const thin = { style: 'thin' as const, color: { argb: 'FF9AA9B1' } }
+  const medium = { style: 'medium' as const, color: { argb: 'FF202A29' } }
+  const richLabel = (label: string, value: string, size = 10.5) => ({
+    richText: [
+      { font: { name: '宋体', size, bold: true }, text: label },
+      { font: { name: '宋体', size }, text: value || '未填写' },
+    ],
+  })
+
+  weeklySheet.mergeCells('A1:H1')
+  weeklySheet.getCell('A1').value = '研究生课表总表'
+  weeklySheet.getCell('A1').font = { name: '黑体', size: 21, bold: true, color: { argb: 'FF000000' } }
+  weeklySheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
+  weeklySheet.getRow(1).height = 40
+
+  weeklySheet.mergeCells('A3:B3'); weeklySheet.mergeCells('C3:D3'); weeklySheet.mergeCells('E3:F3'); weeklySheet.mergeCells('G3:H3')
+  weeklySheet.mergeCells('A4:B4'); weeklySheet.mergeCells('C4:D4'); weeklySheet.mergeCells('E4:H4')
+  weeklySheet.getCell('A3').value = richLabel('姓　　名：', message.identity.name)
+  weeklySheet.getCell('C3').value = richLabel('学生类别：', message.identity.category)
+  weeklySheet.getCell('E3').value = richLabel('培养单位：', message.identity.trainingUnit, 8.5)
+  weeklySheet.getCell('G3').value = richLabel('学　　期：', message.termLabel)
+  weeklySheet.getCell('A4').value = richLabel('学　　号：', message.identity.studentId)
+  weeklySheet.getCell('C4').value = richLabel('所学专业：', message.identity.major)
+  weeklySheet.getCell('E4').value = richLabel('统计范围：', '当前学期正式方案；备选池不计入课表', 9.2)
+  for (const address of ['A3', 'C3', 'E3', 'G3', 'A4', 'C4', 'E4']) weeklySheet.getCell(address).alignment = { vertical: 'middle', wrapText: false, shrinkToFit: true }
+  weeklySheet.getRow(3).height = 23; weeklySheet.getRow(4).height = 23
+
+  const totalCredits = message.rows.reduce((total, row) => total + row.credits, 0)
+  const degreeCount = message.rows.filter((row) => row.degreeLabel.startsWith('学位课')).length
+  const conflictCount = message.rows.filter((row) => row.conflict).length
+  weeklySheet.mergeCells('A5:H5')
+  weeklySheet.getCell('A5').value = `正式方案 ${message.rows.length} 门　·　总学分 ${totalCredits}　·　学位课 ${degreeCount} 门　·　时间冲突 ${conflictCount} 门`
+  weeklySheet.getCell('A5').font = { name: '宋体', size: 10.5, bold: true, color: { argb: 'FF294F72' } }
+  weeklySheet.getCell('A5').alignment = { horizontal: 'left', vertical: 'middle' }
+  weeklySheet.getRow(5).height = 24
+
+  const gridHeaderRow = 7
+  const gridStartRow = 8
+  const gridEndRow = gridStartRow + schedulePeriodTimes.length - 1
+  weeklySheet.getRow(gridHeaderRow).values = ['节次 / 时间', ...scheduleWeekdays]
+  const weeklyBlocks = buildWeeklyExportBlocks(message.rows)
+  const cellTexts = new Map<string, string[]>()
+  const cellBlocks = new Map<string, WeeklyExportBlock[]>()
+  const mergedBlocks = weeklyBlocks.filter((block) => block.span > 1 && !weeklyBlocks.some((other) => other.id !== block.id && weeklyBlocksOverlap(block, other)))
+  const mergedBlockIds = new Set(mergedBlocks.map((block) => block.id))
+
+  const addCellBlock = (rowNumber: number, dayColumn: number, block: WeeklyExportBlock, continuation: boolean) => {
+    const key = `${rowNumber}-${dayColumn}`
+    const currentTexts = cellTexts.get(key) ?? []
+    currentTexts.push(weeklyBlockText(block, continuation))
+    cellTexts.set(key, currentTexts)
+    const currentBlocks = cellBlocks.get(key) ?? []
+    currentBlocks.push(block)
+    cellBlocks.set(key, currentBlocks)
+  }
+
+  for (const block of weeklyBlocks) {
+    if (mergedBlockIds.has(block.id)) continue
+    for (let period = block.start; period < block.start + block.span; period += 1) {
+      addCellBlock(gridStartRow + period - 1, block.weekday + 1, block, period !== block.start)
+    }
+  }
+
+  const normalFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFEAF2FA' } }
+  const degreeFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFFFF2D4' } }
+  const conflictFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFFDE7E3' } }
+  const baseFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFFBFCFD' } }
+
+  for (let column = 1; column <= 8; column += 1) {
+    const cell = weeklySheet.getCell(gridHeaderRow, column)
+    cell.font = { name: '宋体', size: 10.5, bold: true, color: { argb: column === 1 ? 'FF596B76' : 'FF184994' } }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: column === 1 ? 'FFF0F4F2' : 'FFE6EEF8' } }
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+    cell.border = { top: medium, bottom: thin, left: column === 1 ? medium : thin, right: column === 8 ? medium : thin }
+  }
+  weeklySheet.getRow(gridHeaderRow).height = 30
+
+  for (let period = 1; period <= schedulePeriodTimes.length; period += 1) {
+    const rowNumber = gridStartRow + period - 1
+    weeklySheet.getRow(rowNumber).height = 50
+    const timeCell = weeklySheet.getCell(rowNumber, 1)
+    timeCell.value = `${period}\n${schedulePeriodTimes[period - 1]}`
+    timeCell.font = { name: '宋体', size: 8.8, bold: true, color: { argb: 'FF31546B' } }
+    timeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F4F2' } }
+    timeCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+    timeCell.border = { top: thin, bottom: period === schedulePeriodTimes.length ? medium : thin, left: medium, right: thin }
+    for (let day = 1; day <= 7; day += 1) {
+      const column = day + 1
+      const key = `${rowNumber}-${column}`
+      const cell = weeklySheet.getCell(rowNumber, column)
+      const entries = cellBlocks.get(key) ?? []
+      cell.value = cellTexts.get(key)?.join('\n\n') || null
+      cell.font = { name: '宋体', size: entries.length > 1 ? 7.6 : 8.4, color: { argb: entries.some((entry) => entry.row.conflict) ? 'FF7C2F35' : 'FF243D52' } }
+      cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true, shrinkToFit: false }
+      cell.fill = entries.some((entry) => entry.row.conflict) ? conflictFill : entries.some((entry) => entry.row.degreeLabel.startsWith('学位课')) ? degreeFill : normalFill
+      cell.border = { top: thin, bottom: period === schedulePeriodTimes.length ? medium : thin, left: thin, right: day === 7 ? medium : thin }
+    }
+  }
+
+  for (const block of mergedBlocks) {
+    const startRow = gridStartRow + block.start - 1
+    const endRow = startRow + block.span - 1
+    const column = block.weekday + 1
+    weeklySheet.mergeCells(startRow, column, endRow, column)
+    const cell = weeklySheet.getCell(startRow, column)
+    cell.value = weeklyBlockText(block)
+    cell.font = { name: '宋体', size: 8.4, color: { argb: block.row.conflict ? 'FF7C2F35' : 'FF243D52' } }
+    cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true }
+    cell.fill = block.row.conflict ? conflictFill : block.row.degreeLabel.startsWith('学位课') ? degreeFill : normalFill
+  }
+
+  const legendRow = gridEndRow + 2
+  weeklySheet.mergeCells(legendRow, 1, legendRow, 8)
+  weeklySheet.getCell(legendRow, 1).value = '图例：蓝色为普通课程　·　金色为学位课　·　红色为存在时间冲突　·　同一时段多门课程会并列列出。'
+  weeklySheet.getCell(legendRow, 1).font = { name: '宋体', size: 9, color: { argb: 'FF596B76' } }
+  weeklySheet.getCell(legendRow, 1).alignment = { horizontal: 'left', vertical: 'middle' }
+  weeklySheet.getRow(legendRow).height = 23
+
+  let weeklyEndRow = legendRow
+  const unscheduledRows = message.rows.filter((row) => !row.meetings.length)
+  if (unscheduledRows.length) {
+    const unassignedTitleRow = legendRow + 2
+    weeklySheet.mergeCells(unassignedTitleRow, 1, unassignedTitleRow, 8)
+    weeklySheet.getCell(unassignedTitleRow, 1).value = '暂无详细排课的课程'
+    weeklySheet.getCell(unassignedTitleRow, 1).font = { name: '宋体', size: 10, bold: true, color: { argb: 'FF9A682B' } }
+    weeklySheet.getCell(unassignedTitleRow, 1).alignment = { horizontal: 'left', vertical: 'middle' }
+    weeklyEndRow = unassignedTitleRow
+    unscheduledRows.forEach((row, index) => {
+      const rowNumber = unassignedTitleRow + index + 1
+      weeklySheet.mergeCells(rowNumber, 1, rowNumber, 8)
+      weeklySheet.getCell(rowNumber, 1).value = `${row.name} · ${row.courseCode} · ${row.credits} 学分 · ${row.degreeLabel}`
+      weeklySheet.getCell(rowNumber, 1).font = { name: '宋体', size: 9, color: { argb: 'FF596B76' } }
+      weeklySheet.getCell(rowNumber, 1).alignment = { horizontal: 'left', vertical: 'middle' }
+      weeklyEndRow = rowNumber
+    })
+  }
+  weeklySheet.mergeCells(weeklyEndRow + 2, 1, weeklyEndRow + 2, 8)
+  weeklySheet.getCell(weeklyEndRow + 2, 1).value = `中国科学院大学 · 选课规划工具　${message.generatedDate}`
+  weeklySheet.getCell(weeklyEndRow + 2, 1).font = { name: '宋体', size: 9, color: { argb: 'FF596B76' } }
+  weeklySheet.getCell(weeklyEndRow + 2, 1).alignment = { horizontal: 'right', vertical: 'middle' }
+  weeklySheet.mergeCells(weeklyEndRow + 3, 1, weeklyEndRow + 3, 8)
+  weeklySheet.getCell(weeklyEndRow + 3, 1).value = '1 - 1'
+  weeklySheet.getCell(weeklyEndRow + 3, 1).font = { name: '宋体', size: 9, color: { argb: 'FF596B76' } }
+  weeklySheet.getCell(weeklyEndRow + 3, 1).alignment = { horizontal: 'right', vertical: 'middle' }
+  weeklySheet.pageSetup.printArea = `A1:H${weeklyEndRow + 3}`
+  weeklySheet.headerFooter.oddFooter = '&R第 &P 页 / 共 &N 页'
+
+  const detailSheet = workbook.addWorksheet('课程明细', { views: [{ showGridLines: false, zoomScale: 82 }] })
+  detailSheet.properties.defaultRowHeight = 23
+  detailSheet.columns = [6, 28, 18, 8, 8, 23, 43, 18, 23, 17].map((width) => ({ width }))
+  detailSheet.pageSetup = {
+    orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+    horizontalCentered: true,
+    margins: { left: 0.28, right: 0.28, top: 0.38, bottom: 0.42, header: 0.15, footer: 0.18 },
+  }
+  detailSheet.mergeCells('A1:J1')
+  detailSheet.getCell('A1').value = '研究生课表总表 · 课程明细'
+  detailSheet.getCell('A1').font = { name: '黑体', size: 19, bold: true, color: { argb: 'FF000000' } }
+  detailSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
+  detailSheet.getRow(1).height = 38
+  detailSheet.mergeCells('A3:B3'); detailSheet.mergeCells('C3:D3'); detailSheet.mergeCells('E3:G3'); detailSheet.mergeCells('H3:J3')
+  detailSheet.mergeCells('A4:B4'); detailSheet.mergeCells('C4:E4'); detailSheet.mergeCells('F4:J4')
+  detailSheet.getCell('A3').value = richLabel('姓　　名：', message.identity.name)
+  detailSheet.getCell('C3').value = richLabel('学生类别：', message.identity.category)
+  detailSheet.getCell('E3').value = richLabel('培养单位：', message.identity.trainingUnit, 8.5)
+  detailSheet.getCell('H3').value = richLabel('学　　期：', message.termLabel)
+  detailSheet.getCell('A4').value = richLabel('学　　号：', message.identity.studentId)
+  detailSheet.getCell('C4').value = richLabel('所学专业：', message.identity.major)
+  detailSheet.getCell('F4').value = richLabel('统计范围：', '当前学期正式方案课程；备选池不计入课表', 9.2)
+  for (const address of ['A3', 'C3', 'E3', 'H3', 'A4', 'C4', 'F4']) detailSheet.getCell(address).alignment = { vertical: 'middle', wrapText: false, shrinkToFit: true }
+  detailSheet.getRow(3).height = 23; detailSheet.getRow(4).height = 23
+  detailSheet.mergeCells('A5:J5')
+  detailSheet.getCell('A5').value = `正式方案 ${message.rows.length} 门　·　总学分 ${totalCredits}　·　学位课 ${degreeCount} 门　·　时间冲突 ${conflictCount} 门`
+  detailSheet.getCell('A5').font = { name: '宋体', size: 10.5, bold: true, color: { argb: 'FF294F72' } }
+  detailSheet.getCell('A5').alignment = { horizontal: 'left', vertical: 'middle' }
+  detailSheet.getRow(5).height = 24
+
+  const detailHeaderRow = 6
+  const detailStartRow = detailHeaderRow + 1
+  const detailHeaders = ['序号', '课程与班级', '课程属性 / 层次', '学时', '学分', '教师与首席教授', '全部上课安排', '校区 / 名额', '授课 / 考核', '学位课 / 状态']
+  detailSheet.getRow(detailHeaderRow).values = detailHeaders
+  detailSheet.getRow(detailHeaderRow).height = 31
+  const detailEndRow = detailStartRow + Math.max(message.rows.length, 1) - 1
+  if (message.rows.length) {
+    message.rows.forEach((row, index) => {
+      const rowNumber = detailStartRow + index
+      const meetingText = row.meetings.length
+        ? row.meetings.map((meeting) => `周${scheduleWeekdays[meeting.weekday - 1] || '待定'} · ${meeting.rawTime}\n${meeting.rawWeeks} · ${meeting.room || '教室待定'}`).join('\n\n')
+        : '暂无详细排课'
+      detailSheet.getRow(rowNumber).values = [
+        row.sequence, `${row.name}\n${row.courseCode}`, `${row.attribute || '属性待定'}\n${row.level || '层次待定'}`,
+        row.hours || null, row.credits, `主讲：${row.teachers || '待定'}\n首席：${row.leadProfessor || '待定'}`,
+        meetingText, `${row.campus || '校区待定'}\n${row.capacityLabel}`, `${row.teachingMethod || '授课方式待定'}\n${row.examMethod || '考核方式待定'}`,
+        `${row.degreeLabel}${row.conflict ? '\n有时间冲突' : ''}`,
+      ]
+      detailSheet.getRow(rowNumber).height = Math.min(126, Math.max(38, 28 + row.meetings.length * 24, row.name.length > 20 ? 54 : 0))
+    })
+  } else {
+    detailSheet.mergeCells(detailStartRow, 1, detailStartRow, 10)
+    detailSheet.getCell(detailStartRow, 1).value = '当前学期没有正式方案课程'
+    detailSheet.getCell(detailStartRow, 1).alignment = { horizontal: 'center', vertical: 'middle' }
+    detailSheet.getRow(detailStartRow).height = 32
+  }
+
+  for (let row = detailHeaderRow; row <= detailEndRow; row += 1) {
+    for (let column = 1; column <= 10; column += 1) {
+      const cell = detailSheet.getCell(row, column)
+      cell.font = { name: '宋体', size: row === detailHeaderRow ? 10 : 9.3, bold: row === detailHeaderRow, color: { argb: 'FF000000' } }
+      cell.alignment = { horizontal: row === detailHeaderRow || column !== 2 ? 'center' : 'left', vertical: 'middle', wrapText: true }
+      cell.border = { top: row === detailHeaderRow ? medium : thin, bottom: row === detailEndRow ? medium : thin, left: column === 1 ? medium : thin, right: column === 10 ? medium : thin }
+      if (row !== detailHeaderRow && message.rows[row - detailStartRow]?.conflict) cell.fill = conflictFill
+    }
+  }
+  const detailNotesRow = detailEndRow + 2
+  detailSheet.mergeCells(detailNotesRow, 1, detailNotesRow, 10)
+  detailSheet.getCell(detailNotesRow, 1).value = '备注：一周课表位于第一个工作表；本页用于查看完整课程信息。上课安排按全部教学周、星期、节次和教室列出。本表仅供课程规划，以培养方案、导师、培养单位及学校正式系统为准。'
+  detailSheet.getCell(detailNotesRow, 1).font = { name: '宋体', size: 9.3, color: { argb: 'FF333333' } }
+  detailSheet.getCell(detailNotesRow, 1).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true }
+  detailSheet.getRow(detailNotesRow).height = 38
+  const detailFooterRow = detailNotesRow + 2
+  detailSheet.mergeCells(detailFooterRow, 1, detailFooterRow, 10)
+  detailSheet.getCell(detailFooterRow, 1).value = `中国科学院大学 · 选课规划工具　${message.generatedDate}`
+  detailSheet.getCell(detailFooterRow, 1).alignment = { horizontal: 'right', vertical: 'middle' }
+  detailSheet.mergeCells(detailFooterRow + 1, 1, detailFooterRow + 1, 10)
+  detailSheet.getCell(detailFooterRow + 1, 1).value = '1 - 1'
+  detailSheet.getCell(detailFooterRow + 1, 1).alignment = { horizontal: 'right', vertical: 'middle' }
+  detailSheet.autoFilter = { from: `A${detailHeaderRow}`, to: `J${detailHeaderRow}` }
+  detailSheet.pageSetup.printArea = `A1:J${detailFooterRow + 1}`
+  detailSheet.headerFooter.oddFooter = '&R第 &P 页 / 共 &N 页'
+
+  const rawBuffer = await workbook.xlsx.writeBuffer() as unknown
+  if (rawBuffer instanceof ArrayBuffer) return rawBuffer
+  return Uint8Array.from(rawBuffer as Uint8Array).buffer
+}
+
 self.onmessage = async (event: MessageEvent<ImportMessage | ExportMessage>) => {
   try {
     if (event.data.action === 'import') {
       const preview = await normalizeWorkbook(event.data)
       self.postMessage({ action: 'import-result', preview })
+    } else if (event.data.action === 'export-schedule') {
+      const buffer = await exportSchedule(event.data)
+      self.postMessage({ action: 'export-result', buffer }, [buffer])
     } else {
       const buffer = await exportPlan(event.data)
       self.postMessage({ action: 'export-result', buffer }, [buffer])

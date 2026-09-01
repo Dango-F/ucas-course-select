@@ -42,6 +42,13 @@ function isDepartment(course: Course, department: string): boolean {
   return normalizeIdentityText(course.department) === normalizeIdentityText(department)
 }
 
+function isTrainingUnitDepartment(course: Course, trainingUnit: string): boolean {
+  const normalizeUnit = (value: string) => normalizeIdentityText(value).replace(/^中国科学院大学/, '')
+  const courseDepartment = normalizeUnit(course.department)
+  const studentUnit = normalizeUnit(trainingUnit)
+  return Boolean(courseDepartment && studentUnit && (courseDepartment === studentUnit || courseDepartment.includes(studentUnit) || studentUnit.includes(courseDepartment)))
+}
+
 function codeAudience(course: Course): CourseAudience | null {
   const code = normalizeIdentityText(course.baseCode)
   if (/db/.test(code)) return 'doctor'
@@ -121,13 +128,56 @@ function isEthicsGeneralCourse(record: CourseRecord): boolean {
 }
 
 function isEthicsSpecificCourse(profile: StudentProfile, record: CourseRecord): boolean {
-  return isPublicCourse(record, { title: /^学术道德与学术写作规范.*分论/, terms: ['fall', 'spring'], audience: 'graduate', teaching: 'classroom' })
-    && isDisciplineMatch(profile, record.course)
+  return isPublicCourse(record, { title: /^学术道德与学术写作规范/, terms: ['fall', 'spring'], audience: 'graduate', teaching: 'classroom' })
+    && !isEthicsGeneralCourse(record)
+    && isTrainingUnitDepartment(record.course, profile.trainingUnit)
 }
 
 function isEngineeringEthicsCourse(profile: StudentProfile, record: CourseRecord): boolean {
   const audience: CourseAudience = profile.category === 'engineering_doctor' ? 'doctor' : 'master'
   return isPublicCourse(record, { title: /^工程伦理/, department: ENGINEERING_SCIENCE_DEPARTMENT, terms: ['fall', 'spring'], audience, teaching: 'mooc' })
+}
+
+function isCatalogEnglishCourse(record: CourseRecord, audience: 'master' | 'doctor'): boolean {
+  if (!isPublicCompulsoryCourse(record.course) || !isDepartment(record.course, FOREIGN_LANGUAGE_DEPARTMENT)) return false
+  if (!['fall', 'spring'].includes(record.course.term) || !isAudienceAllowed(record.course, audience)) return false
+  const names = `${normalizeIdentityText(record.course.name)} ${recordDisplayName(record)}`
+  return audience === 'master'
+    ? /(?:^|\s)(?:硕士学位英语|英语a(?:$|[-(（]))/.test(names)
+    : /(?:^|\s)(?:博士学位英语|英语b(?:$|[-(（]))/.test(names)
+}
+
+function isCatalogMasterEnglishForPlan(profile: StudentProfile, record: CourseRecord): boolean {
+  if (!isCatalogEnglishCourse(record, 'master')) return false
+  if (profile.english.masterMethod === 'exempt' || profile.english.masterMethod === 'not_applicable') return false
+  return profile.english.masterMethod === 'mooc' ? isMoocTeaching(record) : !isMoocTeaching(record)
+}
+
+export function isCatalogMasterEnglishForProfile(profile: StudentProfile, course: Course, offering?: CourseOffering | null): boolean {
+  return isCatalogMasterEnglishForPlan(profile, { course, offering: offering ?? undefined })
+}
+
+export function isCatalogEnglishForProfile(profile: StudentProfile, course: Course, offering?: CourseOffering | null): boolean {
+  const record: CourseRecord = { course, offering: offering ?? undefined }
+  const masterEnglish = MASTER_TYPES.includes(profile.category) && isCatalogMasterEnglishForPlan(profile, record)
+  const doctorEnglish = DOCTOR_TYPES.includes(profile.category)
+    && profile.english.doctorEnglishRequired
+    && isCatalogEnglishCourse(record, 'doctor')
+  return masterEnglish || doctorEnglish
+}
+
+export function isCatalogPublicCompulsoryForProfile(profile: StudentProfile, course: Course, offering?: CourseOffering | null): boolean {
+  const record: CourseRecord = { course, offering: offering ?? undefined }
+  if (!isPublicCompulsoryCourse(course)) return false
+  if (isEthicsGeneralCourse(record) || isEthicsSpecificCourse(profile, record)) return true
+  if (MASTER_TYPES.includes(profile.category)) {
+    if (isTheoryCourse(record) || isDialecticsCourse(record)) return true
+  }
+  if (DOCTOR_TYPES.includes(profile.category)) {
+    if (isMarxismCourse(record)) return true
+  }
+  if (isCatalogEnglishForProfile(profile, course, offering)) return true
+  return ['engineering_master', 'engineering_doctor'].includes(profile.category) && isEngineeringEthicsCourse(profile, record)
 }
 
 function historySeason(term: string): Term | null {
@@ -177,22 +227,34 @@ function item(key: string, label: string, current: number, target: number, unit:
   return { key, label, current, target, unit, status: current >= target ? 'passed' : current > 0 ? 'warning' : 'pending', detail }
 }
 
-export function isDisciplineMatch(profile: StudentProfile, course: import('../types').Course): boolean {
+export function isFirstLevelDisciplineMatch(profile: StudentProfile, course: Course): boolean {
   if (!profile.discipline) return false
-  if (profile.programKind === 'academic') {
-    return course.firstLevelDiscipline === profile.discipline || course.sharedFirstLevels.includes(profile.discipline) || course.subject === profile.discipline
-  }
-  return course.subject === profile.discipline || course.sharedSubjects.includes(profile.discipline) || course.sharedFirstLevels.includes(profile.discipline)
+  return course.firstLevelDiscipline === profile.discipline || course.sharedFirstLevels.includes(profile.discipline)
+}
+
+function isProfessionalFieldMatch(profile: StudentProfile, course: Course): boolean {
+  const field = profile.programKind === 'professional' ? profile.professionalField?.trim() : ''
+  return Boolean(field && (course.subject === field || course.sharedSubjects.includes(field)))
+}
+
+export function isDisciplineMatch(profile: StudentProfile, course: Course): boolean {
+  return isFirstLevelDisciplineMatch(profile, course) || isProfessionalFieldMatch(profile, course)
+}
+
+export function isAcademicEthicsCourseForProfile(profile: StudentProfile, course: Course): boolean {
+  const title = normalizeIdentityText(course.name)
+  if (!/^学术道德与学术写作规范/.test(title)) return false
+  if (/通论/.test(title)) return isDepartment(course, PUBLIC_POLICY_DEPARTMENT)
+  return isTrainingUnitDepartment(course, profile.trainingUnit)
 }
 
 export function effectiveCourseTaxonomy(profile: StudentProfile, course: import('../types').Course): { attribute: string; level: string } {
-  const directMatch = profile.programKind === 'academic'
-    ? course.firstLevelDiscipline === profile.discipline || course.subject === profile.discipline
-    : course.subject === profile.discipline
+  const field = profile.programKind === 'professional' ? profile.professionalField?.trim() : ''
+  const directMatch = course.firstLevelDiscipline === profile.discipline || Boolean(field && course.subject === field)
   if (directMatch) return { attribute: course.attribute, level: course.level }
-  const sharedIndex = course.sharedSubjects.findIndex((item) => item === profile.discipline)
   const firstLevelIndex = course.sharedFirstLevels.findIndex((item) => item === profile.discipline)
-  const index = sharedIndex >= 0 ? sharedIndex : firstLevelIndex
+  const sharedIndex = field ? course.sharedSubjects.findIndex((item) => item === field) : -1
+  const index = firstLevelIndex >= 0 ? firstLevelIndex : sharedIndex
   if (index < 0) return { attribute: course.attribute, level: course.level }
   return {
     attribute: course.sharedAttributes[index] || course.sharedAttributes[0] || course.attribute,
@@ -274,7 +336,7 @@ export function evaluatePlan(
   if (rules.core) requirementItems.push(item('core-count', '核心课结构', coreCount, rules.core, '门', coreDetail))
   if (rules.professional) requirementItems.push(item('professional-count', '专业课结构', professionalCount, rules.professional, '门', professionalDetail))
   if (rules.doctorDegreeCount) requirementItems.push(item('doctor-degree-count', '博士专业学位课门数', degree.length, rules.doctorDegreeCount, '门', '至少2门，且合计至少4学分'))
-  if (rules.publicElective) requirementItems.push(item('public-elective', '公共选修', publicElectiveCredits, rules.publicElective, '学分', '秋春两学期合计'))
+  if (rules.publicElective) requirementItems.push(item('public-elective', '公共选修课', publicElectiveCredits, rules.publicElective, '学分', '秋春两学期合计'))
   if (rules.professionalElective) requirementItems.push(item('professional-elective', '专业选修', professionalElectiveCredits, rules.professionalElective, '学分', '专业类非学位课'))
 
   const publicChecks: Array<[string, string, boolean, string]> = []
@@ -294,7 +356,7 @@ export function evaluatePlan(
   }
   publicChecks.push(
     ['ethics-general', '学术道德与写作规范·通论', hasPublicCourse(isEthicsGeneralCourse), '公共政策与管理学院 · 公共必修课 · 秋春均可'],
-    ['ethics-specific', '学术道德与写作规范·分论', hasPublicCourse((record) => isEthicsSpecificCourse(profile, record)), '所属学科与学生培养学科匹配 · 公共必修课 · 秋春均可'],
+    ['ethics-specific', '学术道德与写作规范·分论', hasPublicCourse((record) => isEthicsSpecificCourse(profile, record)), '本院系开设 · 公共必修课 · 秋春均可'],
   )
   if (['engineering_master', 'engineering_doctor'].includes(profile.category)) {
     publicChecks.push(['engineering-ethics', '工程伦理', hasPublicCourse((record) => isEngineeringEthicsCourse(profile, record)), '工程科学学院 · 公共必修课 · 慕课 · 秋春均可'])

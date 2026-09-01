@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCatalogIndex } from '../src/domain/catalog'
-import { categoryRules, evaluatePlan } from '../src/domain/requirements'
+import { categoryRules, evaluatePlan, isDisciplineMatch, isFirstLevelDisciplineMatch } from '../src/domain/requirements'
 import type { Catalog, Course, CourseOffering, PlanEntry, StudentCategory, StudentProfile } from '../src/types'
 
 const makeCourse = (id: string, overrides: Partial<Course> = {}): Course => ({
@@ -36,6 +36,23 @@ const makeCatalog = (courses: Course[], offerings: CourseOffering[] = []): Catal
 })
 
 describe('培养要求矩阵', () => {
+  it.each<StudentCategory>([
+    'academic_master', 'ordinary_doctor', 'direct_doctor', 'engineering_doctor', 'engineering_master', 'professional_master',
+  ])('%s 的本学科主口径均为一级学科', (category) => {
+    const ownCourse = makeCourse('OWN')
+    const sameMajorOnly = makeCourse('MAJOR-ONLY', { firstLevelDiscipline: '电子科学与技术', subject: '计算机科学与技术' })
+    expect(isFirstLevelDisciplineMatch(profile(category), ownCourse)).toBe(true)
+    expect(isFirstLevelDisciplineMatch(profile(category), sameMajorOnly)).toBe(false)
+  })
+
+  it('专业学位类别或领域仅作为培养课程的可选补充匹配', () => {
+    const fieldCourse = makeCourse('FIELD', { firstLevelDiscipline: '电子科学与技术', subject: '电子信息' })
+    const engineeringProfile = profile('engineering_master')
+    expect(isDisciplineMatch(engineeringProfile, fieldCourse)).toBe(false)
+    expect(isDisciplineMatch({ ...engineeringProfile, professionalField: '电子信息' }, fieldCourse)).toBe(true)
+    expect(isFirstLevelDisciplineMatch({ ...engineeringProfile, professionalField: '电子信息' }, fieldCourse)).toBe(false)
+  })
+
   it.each<[StudentCategory, number, number, number, number]>([
     ['academic_master', 12, 2, 2, 2],
     ['ordinary_doctor', 4, 0, 0, 0],
@@ -199,12 +216,15 @@ describe('培养要求矩阵', () => {
     expect(wrongAudienceReport.items.find((item) => item.key === 'engineering-ethics')?.status).toBe('pending')
   })
 
-  it('学术道德通论按公共政策与管理学院识别，分论按所属学科匹配而非开设学院', () => {
-    const masterProfile = { ...profile('academic_master'), trainingUnit: '中国科学院大学完全不同的培养单位' }
+  it('学术道德通论按公共政策与管理学院识别，分论按本院系匹配而非一级学科', () => {
+    const masterProfile = { ...profile('academic_master'), trainingUnit: '中国科学院大学计算机科学与技术学院', discipline: '物理学' }
     const general = makeCourse('GENERAL', { name: '学术道德与学术写作规范-通论', department: '公共政策与管理学院', attribute: '公共必修课' })
-    const ownSpecific = makeCourse('OWN-SPECIFIC', { name: '学术道德与学术写作规范-分论', department: '其他开设单位', attribute: '公共必修课' })
-    const otherSpecific = makeCourse('OTHER-SPECIFIC', {
+    const ownSpecific = makeCourse('OWN-SPECIFIC', {
       name: '学术道德与学术写作规范-分论', department: '计算机科学与技术学院', attribute: '公共必修课',
+      subject: '其他学科', firstLevelDiscipline: '其他学科',
+    })
+    const otherSpecific = makeCourse('OTHER-SPECIFIC', {
+      name: '学术道德与学术写作规范-分论', department: '其他开设单位', attribute: '公共必修课',
       subject: '物理学', firstLevelDiscipline: '物理学',
     })
     const report = evaluatePlan(

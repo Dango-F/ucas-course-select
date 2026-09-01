@@ -39,9 +39,9 @@ const showRightPanel = computed(() => !['data', 'history'].includes(String(route
   </div>
 
   <SetupWizard
-    v-else-if="!store.profile || editingProfile"
+    v-else-if="!store.profile || !store.profile.discipline || editingProfile"
     :initial-profile="store.profile"
-    :can-cancel="Boolean(store.profile)"
+    :can-cancel="Boolean(store.profile?.discipline)"
     @cancel="editingProfile = false"
     @complete="editingProfile = false"
   />
