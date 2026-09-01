@@ -28,17 +28,36 @@ describe('课程归一化与合并', () => {
     expect(merged.courses[0].sourceKinds).toEqual(['core', 'schedule'])
   })
 
-  it('合并课程数据时将英语A统一为64学时', () => {
+  it('合并课程数据时将英语A统一为32学时', () => {
     const merged = mergeCatalog(catalog([course({ name: '英语A', hours: 32 })]), { courses: [course({ name: '英语A', hours: 32 })], offerings: [] })
-    expect(merged.courses[0].hours).toBe(64)
+    expect(merged.courses[0].hours).toBe(32)
   })
 
   it('载入旧版课程库时也补齐英语A学时和秋季教学周', () => {
     const legacy = catalog([course({ name: '英语A', hours: 32 })])
     legacy.termConfig.fall.weeks = 20
     const normalized = normalizeCatalog(legacy)
-    expect(normalized.courses[0].hours).toBe(64)
+    expect(normalized.courses[0].hours).toBe(32)
     expect(normalized.termConfig.fall.weeks).toBe(22)
+  })
+
+  it('所属学科只有唯一一级学科映射时，为非核心专业类课程补齐一级学科', () => {
+    const reference = course({ id: 'fall:REF', baseCode: 'REF', subject: '计算机应用技术', firstLevelDiscipline: '计算机科学与技术' })
+    const practice = course({ id: 'fall:PRACTICE', baseCode: 'PRACTICE', name: '智能机器人原型设计与制造实践', attribute: '实践课', subject: '计算机应用技术', firstLevelDiscipline: '', sourceKinds: ['plan'] })
+    const normalized = normalizeCatalog(catalog([reference, practice]))
+    expect(normalized.courses.find((item) => item.id === practice.id)?.firstLevelDiscipline).toBe('计算机科学与技术')
+  })
+
+  it('所属学科存在多个一级学科候选时按课程代码学科段消歧', () => {
+    const references = [
+      course({ id: 'fall:R1', baseCode: '1802040703X1P3001H', subject: '交叉学科', firstLevelDiscipline: '一级学科A' }),
+      course({ id: 'fall:R2', baseCode: '1802040805X2P3001H', subject: '交叉学科', firstLevelDiscipline: '一级学科B' }),
+      course({ id: 'fall:R3', baseCode: '1802040703X1P6001H', subject: '交叉学科', firstLevelDiscipline: '' }),
+      course({ id: 'fall:R4', baseCode: 'UNKNOWN', subject: '交叉学科', firstLevelDiscipline: '' }),
+    ]
+    const normalized = normalizeCatalog(catalog(references))
+    expect(normalized.courses.find((item) => item.id === 'fall:R3')?.firstLevelDiscipline).toBe('一级学科A')
+    expect(normalized.courses.find((item) => item.id === 'fall:R4')?.firstLevelDiscipline).toBe('')
   })
 
   it('导入春季详细排课后会开放春季周课表', () => {

@@ -35,7 +35,7 @@ const attendanceNote = computed(() => Boolean(props.choice && /人文系列讲�
 
         <section class="drawer-section">
           <h3><BookMarked :size="18" /> 培养归属</h3>
-          <dl><div><dt>所属学科</dt><dd>{{ choice.course.subject || '未标注' }}</dd></div><div><dt>所属一级学科</dt><dd>{{ choice.course.firstLevelDiscipline || '未标注' }}</dd></div><div><dt>共享学科</dt><dd>{{ choice.course.sharedSubjects.join('、') || '无' }}</dd></div></dl>
+          <dl><div><dt>所属学科</dt><dd>{{ choice.course.subject || '未标注' }}</dd></div><div><dt>{{ choice.course.professionalProgramCourse ? '关联一级学科（推断）' : '所属一级学科' }}</dt><dd>{{ choice.course.firstLevelDiscipline || '未标注' }}</dd></div><div><dt>共享学科</dt><dd>{{ choice.course.sharedSubjects.join('、') || '无' }}</dd></div></dl>
           <p class="match-note" :class="{ yes: matches }"><CheckCircle2 :size="16" />{{ matchNote }}</p>
         </section>
         <section class="drawer-section">

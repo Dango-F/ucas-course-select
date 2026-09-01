@@ -7,7 +7,7 @@ import { usePlannerStore } from '../stores/planner'
 
 const store = usePlannerStore()
 const rules = computed(() => categoryRules[store.profile!.category])
-const structural = computed(() => store.report?.items.filter((item) => ['term-credits', 'degree-credits', 'core-count', 'professional-count', 'doctor-degree-count', 'public-elective', 'professional-elective'].includes(item.key)) ?? [])
+const structural = computed(() => store.report?.items.filter((item) => ['term-credits', 'stage-credits', 'degree-credits', 'core-count', 'professional-count', 'doctor-degree-count', 'public-elective', 'professional-elective'].includes(item.key)) ?? [])
 const publicCourses = computed(() => store.report?.items.filter((item) => !structural.value.includes(item)) ?? [])
 </script>
 

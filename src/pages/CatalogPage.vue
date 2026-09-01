@@ -30,7 +30,10 @@ const disciplineOnly = ref(savedFilters.disciplineOnly)
 const selected = ref<CourseChoice | null>(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(650)
-const itemHeight = ref(window.innerWidth <= 900 ? 282 : 138)
+const DESKTOP_ITEM_HEIGHT = 138
+const MOBILE_ITEM_HEIGHT = 372
+const MOBILE_EXTRA_MEETING_HEIGHT = 44
+const mobileLayout = ref(window.innerWidth <= 900)
 const retakeChoice = ref<{ choice: CourseChoice; status: PlanStatus; reason: string } | null>(null)
 const copiedField = ref('')
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -58,8 +61,28 @@ const filtered = computed(() => {
     : matches
 })
 
-const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / itemHeight.value) - 4))
-const endIndex = computed(() => Math.min(filtered.value.length, Math.ceil((scrollTop.value + viewportHeight.value) / itemHeight.value) + 4))
+const rowHeights = computed(() => filtered.value.map((choice) => mobileLayout.value
+  ? MOBILE_ITEM_HEIGHT + Math.max(0, (choice.offering?.meetings.length ?? 0) - 1) * MOBILE_EXTRA_MEETING_HEIGHT
+  : DESKTOP_ITEM_HEIGHT))
+const rowOffsets = computed(() => {
+  let offset = 0
+  return rowHeights.value.map((height) => {
+    const current = offset
+    offset += height
+    return current
+  })
+})
+const totalHeight = computed(() => rowHeights.value.reduce((sum, height) => sum + height, 0))
+const startIndex = computed(() => {
+  const bufferedTop = Math.max(0, scrollTop.value - (mobileLayout.value ? MOBILE_ITEM_HEIGHT : DESKTOP_ITEM_HEIGHT) * 4)
+  const index = rowOffsets.value.findIndex((offset, rowIndex) => offset + rowHeights.value[rowIndex] > bufferedTop)
+  return index < 0 ? 0 : index
+})
+const endIndex = computed(() => {
+  const bufferedBottom = scrollTop.value + viewportHeight.value + (mobileLayout.value ? MOBILE_ITEM_HEIGHT : DESKTOP_ITEM_HEIGHT) * 4
+  const index = rowOffsets.value.findIndex((offset) => offset > bufferedBottom)
+  return index < 0 ? filtered.value.length : index
+})
 const visible = computed(() => filtered.value.slice(startIndex.value, endIndex.value))
 
 function onScroll(event: Event) {
@@ -104,7 +127,7 @@ function saveFilters() {
 }
 
 function clearFilters() { query.value = ''; attribute.value = ''; campus.value = ''; level.value = ''; disciplineOnly.value = false; saveFilters() }
-function syncItemHeight() { itemHeight.value = window.innerWidth <= 900 ? 282 : 138 }
+function syncItemHeight() { mobileLayout.value = window.innerWidth <= 900 }
 function remainingSeats(choice: CourseChoice) {
   const offering = choice.offering
   return offering?.capacity ? Math.max(0, offering.capacity - offering.enrolled) : null
@@ -160,10 +183,10 @@ watch([query, attribute, campus, level, disciplineOnly], saveFilters, { flush: '
       <button class="text-button" @click="clearFilters"><Filter :size="15" /> 清除</button>
     </section>
 
-    <section class="catalog-table-head" aria-hidden="true"><span>课程与班级</span><span>培养归属</span><span>上课安排</span><span>教师与名额</span><span>操作</span></section>
+    <section class="catalog-table-head" aria-hidden="true"><span>课程与班级</span><span>培养归属</span><span>上课安排/考核方式</span><span>教师与名额</span><span>操作</span></section>
     <div class="virtual-course-list" @scroll="onScroll">
-      <div class="virtual-spacer" :style="{ height: `${filtered.length * itemHeight}px` }">
-        <article v-for="(choice, index) in visible" :key="choice.id" class="course-row" :style="{ transform: `translateY(${(startIndex + index) * itemHeight}px)` }">
+      <div class="virtual-spacer" :style="{ height: `${totalHeight}px` }">
+        <article v-for="(choice, index) in visible" :key="choice.id" class="course-row" :style="{ height: `${rowHeights[startIndex + index]}px`, transform: `translateY(${rowOffsets[startIndex + index]}px)` }">
           <div class="course-identity">
             <div class="course-main">
               <div class="course-name-row">
@@ -176,9 +199,9 @@ watch([query, attribute, campus, level, disciplineOnly], saveFilters, { flush: '
               </div>
               <div class="course-meta-row"><span>{{ choice.course.department }}</span><strong class="course-credits">{{ choice.course.credits }} <i>学分</i></strong></div>
             </div>
-            <div class="course-taxonomy"><div><span>{{ choice.course.attribute }}</span><span class="level-tag">{{ choice.course.level || '层次待定' }}</span><span v-if="choice.course.professionalProgramCourse" class="pro-tag">专业学位适用</span><span v-if="choice.course.isBenYan" class="b-tag">本研层次</span></div><p class="course-discipline"><b>一级学科：</b><span>{{ choice.course.firstLevelDiscipline || choice.course.subject || '归属待确认' }}</span></p></div>
+            <div class="course-taxonomy"><div><span>{{ choice.course.attribute }}</span><span class="level-tag">{{ choice.course.level || '层次待定' }}</span><span v-if="choice.course.professionalProgramCourse" class="pro-tag">专业学位适用</span><span v-if="choice.course.isBenYan" class="b-tag">本研层次</span></div><p class="course-discipline"><b>所属学科：</b><span>{{ choice.course.subject || '未标注' }}</span><b>{{ choice.course.professionalProgramCourse ? '关联一级学科（推断）：' : '所属一级学科：' }}</b><span>{{ choice.course.firstLevelDiscipline || '待确认' }}</span></p></div>
           </div>
-          <div class="course-time"><div v-if="choice.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in choice.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>可加入方案，暂不参与冲突判断</span></p></div>
+          <div class="course-time"><div v-if="choice.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in choice.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>可加入方案，暂不参与冲突判断</span></p><p class="course-exam"><b>考核方式</b><span>{{ choice.offering?.examMethod || '待定' }}</span></p></div>
           <div class="course-staff"><p><b>主讲</b><span>{{ choice.offering?.teachers.join('、') || '待定' }}</span></p><p v-if="choice.offering?.leadProfessor"><b>首席</b><span>{{ choice.offering.leadProfessor }}</span></p><div class="seat-status" :class="{ full: remainingSeats(choice) === 0 }"><span v-if="choice.offering?.capacity">名额 {{ choice.offering.enrolled }} / {{ choice.offering.capacity }}</span><span v-else>容量待定</span><strong v-if="remainingSeats(choice) !== null">{{ remainingSeats(choice) ? `余 ${remainingSeats(choice)}` : '已满' }}</strong></div></div>
           <div class="course-actions"><template v-if="alreadyAdded(choice)"><span class="added"><Check :size="16" /> 已加入</span><button class="icon-action danger-ghost" title="取消选课" :aria-label="`取消${choice.offering?.name || choice.course.name}`" @click.stop="removeChoice(choice)"><Trash2 :size="18" /></button></template><template v-else><button class="icon-action" title="加入备选" @click="add(choice, 'backup')"><BookmarkPlus :size="18" /></button><button class="button small primary" :disabled="Boolean(store.formalAddBlockReason(choice))" :title="store.formalAddBlockReason(choice) || undefined" @click="add(choice, 'formal')">加入方案</button></template></div>
         </article>

@@ -15,7 +15,7 @@ type ImportMessage = {
 type ExportMessage =
   | { action: 'export'; rows: TranscriptRow[]; identity: TranscriptIdentity; generatedDate: string }
   | { action: 'export-schedule'; rows: ScheduleExportRow[]; identity: TranscriptIdentity; generatedDate: string; termLabel: string }
-const ENGLISH_A_HOURS = 64
+const ENGLISH_A_HOURS = 32
 
 const valueText = (value: ExcelJS.CellValue): string => {
   if (value == null) return ''
@@ -31,6 +31,7 @@ const splitMulti = (value: ExcelJS.CellValue) => valueText(value).split(/[；;\n
 const uniq = <T>(items: T[]) => [...new Set(items.filter(Boolean))]
 const courseId = (term: Term, code: string) => `${term}:${code}`
 const isBenYan = (code: string) => /^B/i.test(code) || /^\d{5}B/i.test(code)
+const isEnglishACourseName = (name: string | undefined) => /^英语A(?:$|[-—_（(])/.test((name ?? '').normalize('NFKC').replace(/\s+/g, ''))
 
 function parseWeeks(value: ExcelJS.CellValue): number[] {
   const cleaned = valueText(value).replace(/[第周\s]/g, '').replace(/，/g, ',').replace(/[—–]/g, '-')
@@ -118,7 +119,7 @@ async function normalizeWorkbook(message: ImportMessage): Promise<ImportPreview>
       professionalProgramCourse: current.professionalProgramCourse || partial.professionalProgramCourse === true,
       isBenYan: current.isBenYan || partial.isBenYan === true,
     }
-    if (merged.name === '英语A') merged.hours = ENGLISH_A_HOURS
+    if (isEnglishACourseName(current.name) || isEnglishACourseName(partial.name) || isEnglishACourseName(merged.name)) merged.hours = ENGLISH_A_HOURS
     courses.set(id, merged)
   }
 
@@ -249,7 +250,10 @@ async function exportPlan(message: Extract<ExportMessage, { action: 'export' }>)
     cell.alignment = { horizontal: 'center', vertical: 'middle' }
   })
 
-  const orderedRows = [...message.rows].sort((a, b) => transcriptTermOrder(a.term) - transcriptTermOrder(b.term) || a.name.localeCompare(b.name, 'zh-CN'))
+  const orderedRows = message.rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => transcriptTermOrder(left.row.term) - transcriptTermOrder(right.row.term) || left.index - right.index)
+    .map(({ row }) => row)
   const rows = orderedRows.length ? orderedRows : [{ term: '—', name: '以下空白', source: '正式方案' as const, hours: 0, credits: 0, grade: '', degree: '' }]
   let rowNumber = headerRow + 1
   let groupStart = rowNumber

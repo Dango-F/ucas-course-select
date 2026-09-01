@@ -24,6 +24,7 @@ describe('培养信息设置', () => {
   it('工程硕士先选择一级学科，并可选填专业学位类别或领域', async () => {
     setProfile.mockClear()
     const wrapper = mount(SetupWizard, { props: { initialProfile: null, canCancel: false } })
+    expect(wrapper.get('.setup-version').text()).toBe('v1.0.2')
     const inputs = wrapper.findAll('input')
     await inputs[0].setValue('测试学生')
     await inputs[1].setValue('20260001')
@@ -33,7 +34,7 @@ describe('培养信息设置', () => {
     await buttonByText(wrapper, '工程硕士').trigger('click')
     await buttonByText(wrapper, '继续').trigger('click')
 
-    expect(wrapper.get('h2').text()).toBe('选择一级学科')
+    expect(wrapper.get('h2').text()).toBe('选择关联一级学科（推断）')
     expect(wrapper.text()).toContain('专业学位类别 / 领域（选填）')
     const selects = wrapper.findAll('select')
     await selects[0].setValue('计算机科学与技术')

@@ -6,7 +6,7 @@ const PUBLIC_COMPULSORY_KEYS = [
 ]
 
 const OVERVIEW_ORDER = [
-  'term-credits', 'degree-credits', 'core-count', 'professional-count',
+  'term-credits', 'stage-credits', 'degree-credits', 'core-count', 'professional-count',
   'doctor-degree-count', 'professional-elective', 'public-compulsory', 'public-elective',
 ]
 

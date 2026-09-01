@@ -20,3 +20,9 @@ export function ownDisciplineCoursePriority(profile: StudentProfile, course: Cou
   if (isCatalogPublicCompulsoryForProfile(profile, course, offering)) return 2
   return 0
 }
+
+export function ownDisciplinePlanPriority(profile: StudentProfile, course: Course, offering?: CourseOffering | null): number {
+  if (!isVisibleForOwnDiscipline(profile, course, offering)) return 1
+  const priority = ownDisciplineCoursePriority(profile, course, offering)
+  return priority === 0 ? 0 : priority + 1
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCatalogIndex } from '../src/domain/catalog'
-import { categoryRules, evaluatePlan, isDisciplineMatch, isFirstLevelDisciplineMatch } from '../src/domain/requirements'
+import { categoryRules, evaluatePlan, isDegreeCourseEligible, isDisciplineMatch, isFirstLevelDisciplineMatch, stageCreditTargets } from '../src/domain/requirements'
 import type { Catalog, Course, CourseOffering, PlanEntry, StudentCategory, StudentProfile } from '../src/types'
 
 const makeCourse = (id: string, overrides: Partial<Course> = {}): Course => ({
@@ -62,7 +62,10 @@ describe('培养要求矩阵', () => {
     ['professional_master', 12, 2, 2, 2],
   ])('%s 使用正确目标', (category, credits, core, professional, publicElective) => {
     expect(categoryRules[category]).toMatchObject({ degreeCredits: credits, core, professional, publicElective })
+    expect(stageCreditTargets[category]).toBe(['ordinary_doctor', 'direct_doctor', 'engineering_doctor'].includes(category) ? 38 : 30)
     const report = evaluatePlan(profile(category), [], [], createCatalogIndex(makeCatalog([])), 'fall')
+    expect(report.stageCredits).toBe(0)
+    expect(report.items.find((item) => item.key === 'stage-credits')?.target).toBe(stageCreditTargets[category])
     expect(report.items.find((item) => item.key === 'degree-credits')?.target).toBe(credits)
     expect(Boolean(report.items.find((item) => item.key === 'public-elective'))).toBe(publicElective > 0)
   })
@@ -76,6 +79,7 @@ describe('培养要求矩阵', () => {
     ]
     const entries = courses.map((course, index) => makeEntry(String(index), course, null, course.baseCode !== 'PE'))
     const report = evaluatePlan(profile('academic_master'), entries, [], createCatalogIndex(makeCatalog(courses)), 'fall')
+    expect(report.stageCredits).toBe(17)
     expect(report.degreeCredits).toBe(15)
     expect(report.coreCount).toBe(2)
     expect(report.professionalCount).toBe(2)
@@ -96,6 +100,14 @@ describe('培养要求矩阵', () => {
     const publicCourse = makeCourse('PUBLIC', { attribute: '公共必修课', credits: 3 })
     const report = evaluatePlan(profile('academic_master'), [makeEntry('public', publicCourse)], [], createCatalogIndex(makeCatalog([publicCourse])), 'fall')
     expect(report.degreeCredits).toBe(0)
+  })
+
+  it.each(['研讨课', '实验课', '实践课', '科学前沿讲座'])("%s不能设置为学位课", (attribute) => {
+    expect(isDegreeCourseEligible(profile('academic_master'), makeCourse(`NO-DEGREE-${attribute}`, { attribute }))).toBe(false)
+  })
+
+  it.each(['学科核心课', '专业核心课', '专业课'])("%s可以设置为学位课", (attribute) => {
+    expect(isDegreeCourseEligible(profile('academic_master'), makeCourse(`DEGREE-${attribute}`, { attribute }))).toBe(true)
   })
 
   it('英语A线下课必须恰好选择一门', () => {
@@ -120,10 +132,11 @@ describe('培养要求矩阵', () => {
     expect(report.warnings.some((warning) => warning.includes('恰好选择1门'))).toBe(true)
   })
 
-  it('普博要求两门四学分且至少一门本学科硕博通用/博士课程，不要求公共选修', () => {
-    const courses = [makeCourse('D1', { credits: 2 }), makeCourse('D2', { credits: 2, level: '博士课程' })]
-    const report = evaluatePlan(profile('ordinary_doctor'), courses.map((course, index) => makeEntry(String(index), course)), [], createCatalogIndex(makeCatalog(courses)), 'fall')
+  it('普博要求一门本学科硕博通用/博士学位课和四学分，不要求公共选修', () => {
+    const course = makeCourse('D1', { credits: 4, level: '博士课程' })
+    const report = evaluatePlan(profile('ordinary_doctor'), [makeEntry('doctor', course)], [], createCatalogIndex(makeCatalog([course])), 'fall')
     expect(report.items.find((item) => item.key === 'doctor-degree-count')?.status).toBe('passed')
+    expect(report.items.find((item) => item.key === 'doctor-degree-count')?.target).toBe(1)
     expect(report.items.some((item) => item.key === 'public-elective')).toBe(false)
     expect(report.warnings.some((warning) => warning.includes('至少1门'))).toBe(false)
   })
@@ -159,16 +172,11 @@ describe('培养要求矩阵', () => {
     expect(report.items.find((item) => item.key === 'engineering-ethics')?.status).toBe('passed')
   })
 
-  it('普通博士同时满足至少2门和至少4学分，单门4学分仍未满足门数', () => {
+  it('普通博士单门4学分的本学科硕博通用课程可同时满足门数和学分', () => {
     const oneCourse = makeCourse('D4', { credits: 4 })
     const oneReport = evaluatePlan(profile('ordinary_doctor'), [makeEntry('one', oneCourse)], [], createCatalogIndex(makeCatalog([oneCourse])), 'fall')
     expect(oneReport.degreeCredits).toBe(4)
-    expect(oneReport.items.find((item) => item.key === 'doctor-degree-count')?.status).not.toBe('passed')
-
-    const twoCourses = [makeCourse('D1', { credits: 2 }), makeCourse('D2', { credits: 2, level: '博士课程' })]
-    const twoReport = evaluatePlan(profile('ordinary_doctor'), twoCourses.map((course, index) => makeEntry(String(index), course)), [], createCatalogIndex(makeCatalog(twoCourses)), 'fall')
-    expect(twoReport.degreeCredits).toBe(4)
-    expect(twoReport.items.find((item) => item.key === 'doctor-degree-count')?.status).toBe('passed')
+    expect(oneReport.items.find((item) => item.key === 'doctor-degree-count')?.status).toBe('passed')
   })
 
   it('公共必修身份同时校验开设单位、课程属性、培养层次、学期和教学形式', () => {

@@ -33,10 +33,46 @@ export function buildChoices(catalog: Catalog, term: Term): CourseChoice[] {
   return choices
 }
 
+function disciplineCodeKey(code: string): string {
+  return code.trim().toUpperCase().match(/^\d{6}([0-9A-Z]{4})/)?.[1] ?? ''
+}
+
+function isEnglishACourseName(name: string): boolean {
+  return /^英语A(?:$|[-—_（(])/.test(name.normalize('NFKC').replace(/\s+/g, ''))
+}
+
+function inferFirstLevelDisciplines(courses: Course[]): Course[] {
+  const candidates = new Map<string, Set<string>>()
+  const codeCandidates = new Map<string, Set<string>>()
+  for (const course of courses) {
+    if (!course.subject || !course.firstLevelDiscipline) continue
+    const values = candidates.get(course.subject) ?? new Set<string>()
+    values.add(course.firstLevelDiscipline)
+    candidates.set(course.subject, values)
+    const codeKey = disciplineCodeKey(course.baseCode)
+    if (codeKey) {
+      const mappingKey = `${course.subject}\u0000${codeKey}`
+      const codeValues = codeCandidates.get(mappingKey) ?? new Set<string>()
+      codeValues.add(course.firstLevelDiscipline)
+      codeCandidates.set(mappingKey, codeValues)
+    }
+  }
+  return courses.map((course) => {
+    if (course.firstLevelDiscipline || !course.subject) return course
+    const values = [...(candidates.get(course.subject) ?? [])]
+    if (values.length === 1) return { ...course, firstLevelDiscipline: values[0] }
+    const codeKey = disciplineCodeKey(course.baseCode)
+    const codeValues = codeKey ? [...(codeCandidates.get(`${course.subject}\u0000${codeKey}`) ?? [])] : []
+    return codeValues.length === 1 ? { ...course, firstLevelDiscipline: codeValues[0] } : course
+  })
+}
+
 export function normalizeCatalog(catalog: Catalog): Catalog {
+  const courses = inferFirstLevelDisciplines(catalog.courses.map((course) => isEnglishACourseName(course.name) ? { ...course, hours: 32 } : course))
   return {
     ...catalog,
-    courses: catalog.courses.map((course) => course.name === '英语A' ? { ...course, hours: 64 } : course),
+    courses,
+    disciplines: [...new Set([...catalog.disciplines, ...courses.filter((course) => !course.professionalProgramCourse).flatMap((course) => [course.firstLevelDiscipline, ...course.sharedFirstLevels])].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN')),
     termConfig: {
       ...catalog.termConfig,
       fall: { ...catalog.termConfig.fall, weeks: Math.max(22, catalog.termConfig.fall.weeks) },
@@ -48,7 +84,7 @@ export function mergeCatalog(base: Catalog, incoming: ImportPreviewLike): Catalo
   const courses = new Map(base.courses.map((course) => [course.id, course]))
   const offerings = new Map(base.offerings.map((offering) => [offering.id, offering]))
   for (const course of incoming.courses) {
-    const normalizedCourse = course.name === '英语A' ? { ...course, hours: 64 } : course
+    const normalizedCourse = isEnglishACourseName(course.name) ? { ...course, hours: 32 } : course
     const current = courses.get(normalizedCourse.id)
     const merged = current ? {
       ...current,
@@ -71,7 +107,7 @@ export function mergeCatalog(base: Catalog, incoming: ImportPreviewLike): Catalo
       professionalProgramCourse: current.professionalProgramCourse || normalizedCourse.professionalProgramCourse,
       isBenYan: current.isBenYan || normalizedCourse.isBenYan,
     } : normalizedCourse
-    if (merged.name === '英语A') merged.hours = 64
+    if (isEnglishACourseName(current?.name ?? '') || isEnglishACourseName(normalizedCourse.name) || isEnglishACourseName(merged.name)) merged.hours = 32
     courses.set(normalizedCourse.id, merged)
   }
   for (const offering of incoming.offerings) offerings.set(offering.id, offering)

@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { usePlannerStore } from '../stores/planner'
 
 const store = usePlannerStore()
-const items = computed(() => (store.report?.items ?? []).filter((item) => ['term-credits', 'degree-credits', 'core-count', 'professional-count', 'doctor-degree-count', 'public-elective'].includes(item.key)).slice(0, 5))
+const items = computed(() => (store.report?.items ?? []).filter((item) => ['term-credits', 'stage-credits', 'degree-credits', 'core-count', 'professional-count', 'doctor-degree-count', 'public-elective'].includes(item.key)).slice(0, 6))
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isVisibleForOwnDiscipline, ownDisciplineCoursePriority } from '../src/domain/catalogFilters'
+import { isVisibleForOwnDiscipline, ownDisciplineCoursePriority, ownDisciplinePlanPriority } from '../src/domain/catalogFilters'
 import type { Course, StudentProfile } from '../src/types'
 
 const profile: StudentProfile = {
@@ -82,5 +82,15 @@ describe('课程目录本学科筛选', () => {
       course('高级人工智能'),
     ].sort((left, right) => ownDisciplineCoursePriority(doctorProfile, left) - ownDisciplineCoursePriority(doctorProfile, right))
     expect(rows.map((item) => item.name)).toEqual(['高级人工智能', '英语B', '中国马克思主义与当代', '学术道德与学术写作规范-通论'])
+  })
+
+  it('选课方案保留只看本学科的排序，并把已选的非本学科课程放在最后', () => {
+    const rows = [
+      course('学术道德与学术写作规范-通论', { attribute: '公共必修课', department: '公共政策与管理学院' }),
+      course('英语A', { attribute: '公共必修课', department: '外语系', level: '硕士课程' }),
+      course('物理学专题', { subject: '物理学', firstLevelDiscipline: '物理学' }),
+      course('数据挖掘'),
+    ].sort((left, right) => ownDisciplinePlanPriority(profile, left) - ownDisciplinePlanPriority(profile, right))
+    expect(rows.map((item) => item.name)).toEqual(['数据挖掘', '物理学专题', '英语A', '学术道德与学术写作规范-通论'])
   })
 })

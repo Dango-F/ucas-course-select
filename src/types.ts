@@ -175,6 +175,7 @@ export interface RequirementItem {
 
 export interface RequirementReport {
   items: RequirementItem[]
+  stageCredits: number
   effectiveCredits: number
   degreeCredits: number
   coreCount: number

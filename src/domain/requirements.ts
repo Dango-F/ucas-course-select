@@ -3,6 +3,7 @@ import type { CompletedCourse, Course, CourseOffering, PlanEntry, RequirementIte
 
 const CORE_ATTRIBUTES = ['学科核心课', '专业核心课']
 const PROFESSIONAL_ATTRIBUTES = ['学科核心课', '专业核心课', '专业课', '研讨课', '实验课', '实践课', '科学前沿讲座']
+const DEGREE_COURSE_ATTRIBUTES = [...CORE_ATTRIBUTES, '专业课']
 const MASTER_TYPES: StudentCategory[] = ['academic_master', 'engineering_master', 'professional_master', 'direct_doctor']
 const DOCTOR_TYPES: StudentCategory[] = ['ordinary_doctor', 'engineering_doctor', 'direct_doctor']
 const PUBLIC_COMPULSORY_ATTRIBUTE = '公共必修课'
@@ -214,9 +215,18 @@ export const categoryLabels: Record<StudentCategory, string> = {
   professional_master: '其他专业学位硕士',
 }
 
+export const stageCreditTargets: Record<StudentCategory, number> = {
+  academic_master: 30,
+  ordinary_doctor: 38,
+  direct_doctor: 38,
+  engineering_doctor: 38,
+  engineering_master: 30,
+  professional_master: 30,
+}
+
 export const categoryRules: Record<StudentCategory, { degreeCredits: number; core: number; professional: number; publicElective: number; professionalElective: number; doctorDegreeCount: number }> = {
   academic_master: { degreeCredits: 12, core: 2, professional: 2, publicElective: 2, professionalElective: 0, doctorDegreeCount: 0 },
-  ordinary_doctor: { degreeCredits: 4, core: 0, professional: 0, publicElective: 0, professionalElective: 0, doctorDegreeCount: 2 },
+  ordinary_doctor: { degreeCredits: 4, core: 0, professional: 0, publicElective: 0, professionalElective: 0, doctorDegreeCount: 1 },
   direct_doctor: { degreeCredits: 16, core: 2, professional: 2, publicElective: 2, professionalElective: 0, doctorDegreeCount: 0 },
   engineering_doctor: { degreeCredits: 4, core: 0, professional: 0, publicElective: 0, professionalElective: 0, doctorDegreeCount: 2 },
   engineering_master: { degreeCredits: 12, core: 2, professional: 2, publicElective: 2, professionalElective: 2, doctorDegreeCount: 0 },
@@ -263,7 +273,7 @@ export function effectiveCourseTaxonomy(profile: StudentProfile, course: import(
 }
 
 export function isDegreeCourseEligible(profile: StudentProfile, course: Course): boolean {
-  return PROFESSIONAL_ATTRIBUTES.includes(normalizeAttribute(effectiveCourseTaxonomy(profile, course).attribute))
+  return DEGREE_COURSE_ATTRIBUTES.includes(normalizeAttribute(effectiveCourseTaxonomy(profile, course).attribute))
 }
 
 export function isSportsPublicElective(course: Course): boolean {
@@ -295,8 +305,15 @@ export function evaluatePlan(
   })
   const valid = selected.filter(({ course }) => isLevelValid(profile, course))
   const effective = valid.filter(({ course }) => course.term === activeTerm && !/人文系列讲座|科学前沿讲座/.test(course.name))
+  const stageCredits = valid.reduce((sum, { course }) => sum + course.credits, 0)
   const degree = valid.filter(({ entry, course }) => entry.isDegreeCourse && entry.approvalState === 'confirmed' && isDegreeCourseEligible(profile, course))
   const degreeCredits = degree.reduce((sum, { course }) => sum + course.credits, 0)
+  const qualifyingDoctorDegree = degree.filter(({ course }) => {
+    const taxonomy = effectiveCourseTaxonomy(profile, course)
+    return isDisciplineMatch(profile, course)
+      && DEGREE_COURSE_ATTRIBUTES.includes(normalizeAttribute(taxonomy.attribute))
+      && ['硕博通用课程', '博士课程'].includes(taxonomy.level)
+  })
   const selectedCore = valid.filter(({ course }) => isDisciplineMatch(profile, course) && CORE_ATTRIBUTES.includes(normalizeAttribute(effectiveCourseTaxonomy(profile, course).attribute)))
   const coreCount = selectedCore.filter(({ entry }) => entry.isDegreeCourse && entry.approvalState === 'confirmed').length
   const corePendingCount = selectedCore.length - coreCount
@@ -330,12 +347,25 @@ export function evaluatePlan(
   const warnings: string[] = []
   const requirementItems: RequirementItem[] = [
     item('term-credits', `${activeTerm === 'fall' ? '秋季' : '春季'}有效学分`, effectiveCredits, 10, '学分', '不含人文系列讲座和科学前沿讲座'),
+    item('stage-credits', '全程学分', stageCredits, stageCreditTargets[profile.category], '学分', '正式方案中适用课程的秋春两学期合计'),
     item('degree-credits', '专业学位课', degreeCredits, rules.degreeCredits, '学分', '仅统计已确认并获认可的学位课'),
   ]
 
   if (rules.core) requirementItems.push(item('core-count', '核心课结构', coreCount, rules.core, '门', coreDetail))
   if (rules.professional) requirementItems.push(item('professional-count', '专业课结构', professionalCount, rules.professional, '门', professionalDetail))
-  if (rules.doctorDegreeCount) requirementItems.push(item('doctor-degree-count', '博士专业学位课门数', degree.length, rules.doctorDegreeCount, '门', '至少2门，且合计至少4学分'))
+  if (rules.doctorDegreeCount) {
+    const ordinaryDoctor = profile.category === 'ordinary_doctor'
+    requirementItems.push(item(
+      'doctor-degree-count',
+      ordinaryDoctor ? '博士学位课结构' : '博士专业学位课门数',
+      ordinaryDoctor ? qualifyingDoctorDegree.length : degree.length,
+      rules.doctorDegreeCount,
+      '门',
+      ordinaryDoctor
+        ? '至少1门本学科硕博通用或博士专属核心课/专业课；专业学位课合计至少4学分'
+        : '至少2门，且合计至少4学分',
+    ))
+  }
   if (rules.publicElective) requirementItems.push(item('public-elective', '公共选修课', publicElectiveCredits, rules.publicElective, '学分', '秋春两学期合计'))
   if (rules.professionalElective) requirementItems.push(item('professional-elective', '专业选修', professionalElectiveCredits, rules.professionalElective, '学分', '专业类非学位课'))
 
@@ -378,11 +408,7 @@ export function evaluatePlan(
   }
   for (const [term, count] of sportsByTerm) if (count > 1) warnings.push(`${term === 'fall' ? '秋季' : '春季'}体育公共选修已选${count}门，每学期最多1门。`)
   if (DOCTOR_TYPES.includes(profile.category)) {
-    const qualifying = degree.filter(({ course }) => {
-      const taxonomy = effectiveCourseTaxonomy(profile, course)
-      return isDisciplineMatch(profile, course) && CORE_ATTRIBUTES.concat('专业课').includes(normalizeAttribute(taxonomy.attribute)) && ['硕博通用课程', '博士课程'].includes(taxonomy.level)
-    })
-    if (qualifying.length < 1) warnings.push('博士生还需至少1门本学科硕博通用或博士专属核心课/专业课作为学位课。')
+    if (qualifyingDoctorDegree.length < 1) warnings.push('博士生还需至少1门本学科硕博通用或博士专属核心课/专业课作为学位课。')
   }
   if (profile.category === 'professional_master') warnings.push('其他专业学位硕士的培养方案附加要求需要本人和导师另行确认。')
   const invalidCount = selected.length - valid.length
@@ -391,5 +417,5 @@ export function evaluatePlan(
   if (selected.some(({ course }) => /科学前沿讲座/.test(course.name))) warnings.push('科学前沿讲座须全学年听满20学时后才能取得课程学分。')
   if (selected.some(({ course }) => course.isBenYan)) warnings.push('已选本研层次课程；增选、中期退课、缓考、补考和重修按本科生规定执行，请在课程详情查看具体条件。')
 
-  return { items: requirementItems, effectiveCredits, degreeCredits, coreCount, professionalCount, publicElectiveCredits, professionalElectiveCredits, warnings }
+  return { items: requirementItems, stageCredits, effectiveCredits, degreeCredits, coreCount, professionalCount, publicElectiveCredits, professionalElectiveCredits, warnings }
 }

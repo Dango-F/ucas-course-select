@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { AlertTriangle, ArrowLeftRight, BookCheck, Check, Trash2 } from 'lucide-vue-next'
 import PageHeader from '../components/PageHeader.vue'
+import { ownDisciplinePlanPriority } from '../domain/catalogFilters'
 import { isDegreeCourseEligible, isDisciplineMatch } from '../domain/requirements'
 import { usePlannerStore } from '../stores/planner'
 import type { Course, CourseConflict, CourseOffering, PlanEntry, PlanStatus } from '../types'
@@ -14,12 +15,13 @@ const clearAllOpen = ref(false)
 const conflictEntryIds = computed(() => new Set(store.conflicts.flatMap((conflict) => [conflict.entryA, conflict.entryB])))
 type PlanRow = { entry: PlanEntry; course: Course; offering: CourseOffering | null }
 type PlanConflictGroup = { entryIds: string[]; conflicts: CourseConflict[]; rows: PlanRow[]; kind: 'conflict' | 'regular' }
+function coursePriority(row: PlanRow) { return store.profile ? ownDisciplinePlanPriority(store.profile, row.course, row.offering) : 0 }
 
 const rows = computed<PlanRow[]>(() => (tab.value === 'formal' ? store.formalEntries : store.backupEntries).flatMap((entry) => {
   const course = store.index.courses.get(entry.courseId)
   const offering = entry.offeringId ? store.index.offerings.get(entry.offeringId) ?? null : null
   return course ? [{ entry, course, offering }] : []
-}).sort((left, right) => Number(conflictEntryIds.value.has(right.entry.id)) - Number(conflictEntryIds.value.has(left.entry.id))))
+}).sort((left, right) => Number(conflictEntryIds.value.has(right.entry.id)) - Number(conflictEntryIds.value.has(left.entry.id)) || coursePriority(left) - coursePriority(right)))
 const displayGroups = computed<PlanConflictGroup[]>(() => {
   const rowMap = new Map(rows.value.map((row) => [row.entry.id, row]))
   const visibleConflicts = store.conflicts.filter((conflict) => rowMap.has(conflict.entryA) && rowMap.has(conflict.entryB))
@@ -92,14 +94,14 @@ async function clearAllCourses() {
                 </div>
                 <div class="course-taxonomy">
                   <div><span>{{ row.course.attribute }}</span><span class="level-tag">{{ row.course.level || '层次待定' }}</span><span v-if="row.entry.isDegreeCourse" :class="['plan-degree-tag', row.entry.approvalState]">学位课{{ row.entry.approvalState === 'pending' ? '·待确认' : '' }}</span><span v-else-if="isPendingDegree(row)" class="degree-pending-tag">待设为学位课</span><span v-if="row.entry.retake" class="retake-tag">重修</span><span v-if="row.course.professionalProgramCourse" class="pro-tag">专业学位适用</span><span v-if="row.course.isBenYan" class="b-tag">本研层次</span></div>
-                  <p>{{ row.course.firstLevelDiscipline || row.course.subject || '归属待确认' }}</p>
+                  <p class="course-discipline"><b>所属学科：</b><span>{{ row.course.subject || '未标注' }}</span><b>{{ row.course.professionalProgramCourse ? '关联一级学科（推断）：' : '所属一级学科：' }}</b><span>{{ row.course.firstLevelDiscipline || '待确认' }}</span></p>
                 </div>
               </div>
               <div class="course-time"><div v-if="row.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in row.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>暂不参与冲突判断</span></p></div>
               <div class="course-staff"><p><b>主讲</b><span>{{ row.offering?.teachers.join('、') || '待定' }}</span></p><p v-if="row.offering?.leadProfessor"><b>首席</b><span>{{ row.offering.leadProfessor }}</span></p></div>
               <div class="plan-credit-actions">
                 <div class="plan-credit-display"><strong>{{ row.course.credits }}</strong><span>学分</span></div>
-                <div class="plan-actions"><button v-if="tab === 'formal' && (row.entry.isDegreeCourse || isDegreeCourseEligible(store.profile!, row.course))" class="text-button" @click="openDegree(row.entry)"><BookCheck :size="16" /> {{ row.entry.isDegreeCourse ? '修改学位课' : '设为学位课' }}</button><span v-else-if="tab === 'formal'" class="degree-ineligible-note">仅专业类课程可设为学位课</span><button class="text-button" @click="moveEntry(row.entry, tab === 'formal' ? 'backup' : 'formal')"><ArrowLeftRight :size="16" /> {{ tab === 'formal' ? '移至备选' : '转为正式' }}</button><button class="icon-button danger-ghost" aria-label="删除" @click="store.removeEntry(row.entry.id)"><Trash2 :size="17" /></button></div>
+                <div class="plan-actions"><span v-if="tab === 'formal'" class="degree-action-slot"><button v-if="isDegreeCourseEligible(store.profile!, row.course)" class="text-button" @click="openDegree(row.entry)"><BookCheck :size="16" /> {{ row.entry.isDegreeCourse ? '修改学位课' : '设为学位课' }}</button><small v-else class="degree-ineligible-note"><span>仅核心课和专业课</span><span>可设为学位课</span></small></span><button class="text-button" @click="moveEntry(row.entry, tab === 'formal' ? 'backup' : 'formal')"><ArrowLeftRight :size="16" /> {{ tab === 'formal' ? '移至备选' : '转为正式' }}</button><button class="icon-button danger-ghost" aria-label="删除" @click="store.removeEntry(row.entry.id)"><Trash2 :size="17" /></button></div>
               </div>
             </div>
           </article>

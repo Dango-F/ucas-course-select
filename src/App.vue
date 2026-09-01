@@ -8,7 +8,7 @@ import {
 import SetupWizard from './components/SetupWizard.vue'
 import RequirementRail from './components/RequirementRail.vue'
 import PlanSummary from './components/PlanSummary.vue'
-import { categoryLabels } from './domain/requirements'
+import { categoryLabels, stageCreditTargets } from './domain/requirements'
 import { usePlannerStore } from './stores/planner'
 
 const store = usePlannerStore()
@@ -29,6 +29,9 @@ const navItems = [
 ]
 
 const showRightPanel = computed(() => !['data', 'history'].includes(String(route.name)))
+const stageCreditTarget = computed(() => stageCreditTargets[store.profile?.category ?? 'academic_master'])
+const stageCreditLabel = computed(() => stageCreditTarget.value === 38 ? '博士阶段' : '硕士阶段')
+const stageCreditCurrent = computed(() => store.report?.stageCredits ?? 0)
 </script>
 
 <template>
@@ -50,7 +53,7 @@ const showRightPanel = computed(() => !['data', 'history'].includes(String(route
     <aside class="sidebar" :class="{ open: mobileNavOpen }">
       <div class="brand">
         <img class="brand-logo" src="/branding/ucas-logo-horizontal-white.png" alt="中国科学院大学" />
-        <div class="brand-meta"><span>UCAS · 2026</span><strong>选课规划</strong></div>
+        <div class="brand-meta"><span>UCAS · 2026</span><div class="brand-title-line"><strong>选课规划</strong><em>v1.0.2</em></div></div>
         <button class="icon-button sidebar-close" aria-label="关闭导航" @click="mobileNavOpen = false"><X :size="20" /></button>
       </div>
 
@@ -78,6 +81,10 @@ const showRightPanel = computed(() => !['data', 'history'].includes(String(route
         <div class="term-switch" aria-label="选择学期">
           <button :class="{ active: store.activeTerm === 'fall' }" @click="store.setTerm('fall')">2026 秋</button>
           <button :class="{ active: store.activeTerm === 'spring' }" @click="store.setTerm('spring')">2027 春</button>
+        </div>
+        <div class="stage-credit-stat" :class="{ doctoral: stageCreditTarget === 38 }" aria-label="整个培养阶段学分进度">
+          <span class="stage-credit-stat-label">{{ stageCreditLabel }}<small>全程学分</small></span>
+          <strong>{{ stageCreditCurrent.toFixed(1) }}</strong><i>/ {{ stageCreditTarget }} 学分</i>
         </div>
         <div class="data-stamp"><span>课程库</span><strong>{{ store.catalog.dataVersion }}</strong></div>
       </header>

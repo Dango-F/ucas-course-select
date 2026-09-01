@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { Database, Download, FileJson, FileSpreadsheet, Printer, RefreshCcw, Upload, XCircle } from 'lucide-vue-next'
 import PageHeader from '../components/PageHeader.vue'
 import TranscriptSheet from '../components/TranscriptSheet.vue'
+import { ownDisciplinePlanPriority } from '../domain/catalogFilters'
 import { categoryLabels } from '../domain/requirements'
 import { transcriptTermOrder } from '../domain/term'
 import { usePlannerStore } from '../stores/planner'
@@ -15,7 +16,7 @@ const error = ref('')
 const confirmReset = ref(false)
 const printReady = ref(false)
 const pdfPreview = ref(false)
-const scheduleOfferingCount = computed(() => store.catalog.dataVersion === '2026-08-28' ? 2084 : store.catalog.offerings.length)
+const scheduleOfferingCount = computed(() => store.catalog.offerings.length)
 const exportIdentityComplete = computed(() => Boolean(store.profile?.name.trim() && store.profile?.studentId.trim() && store.profile?.trainingUnit.trim() && store.profile?.major.trim()))
 const generatedDate = computed(() => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date()))
 const transcriptIdentity = computed<TranscriptIdentity>(() => ({
@@ -41,11 +42,14 @@ const transcriptRows = computed<TranscriptRow[]>(() => store.planEntries.flatMap
   const offering = entry.offeringId ? store.index.offerings.get(entry.offeringId) : null
   if (!course) return []
   return [{
-    term: course.term === 'fall' ? '2026—2027学年(秋)第一学期' : '2026—2027学年(春)第二学期',
-    name: offering?.name || course.name, source: entry.status === 'formal' ? '正式方案' as const : '备选池' as const, hours: course.hours,
-    credits: course.credits, grade: '-', degree: entry.isDegreeCourse ? '是' : '否',
+    row: {
+      term: course.term === 'fall' ? '2026—2027学年(秋)第一学期' : '2026—2027学年(春)第二学期',
+      name: offering?.name || course.name, source: entry.status === 'formal' ? '正式方案' as const : '备选池' as const, hours: course.hours,
+      credits: course.credits, grade: '-', degree: entry.isDegreeCourse ? '是' : '否',
+    },
+    priority: store.profile ? ownDisciplinePlanPriority(store.profile, course, offering) : 0,
   }]
-}).sort((a, b) => transcriptTermOrder(a.term) - transcriptTermOrder(b.term) || a.name.localeCompare(b.name, 'zh-CN')))
+}).sort((left, right) => transcriptTermOrder(left.row.term) - transcriptTermOrder(right.row.term) || left.priority - right.priority || left.row.name.localeCompare(right.row.name, 'zh-CN')).map(({ row }) => row))
 
 function download(content: BlobPart, fileName: string, type: string) {
   const url = URL.createObjectURL(new Blob([content], { type }))

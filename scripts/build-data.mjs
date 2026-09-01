@@ -8,12 +8,12 @@ const DATA_DIR = path.join(ROOT, 'data')
 const OUT_DIR = path.join(ROOT, 'public', 'data')
 const FALL = 'fall'
 const SPRING = 'spring'
-const ENGLISH_A_HOURS = 64
+const ENGLISH_A_HOURS = 32
 
 const files = {
-  plan: path.join(DATA_DIR, '2026-2027学年秋季和春季开课计划表0828.xlsx'),
-  core: path.join(DATA_DIR, '2026-2027学年研究生核心课和专业课列表（请先阅读表格最下方的说明）0828.xlsx'),
-  schedule: path.join(DATA_DIR, '2026年秋季学期课表.xlsx'),
+  plan: path.join(DATA_DIR, '2026-2027学年秋季和春季开课计划表0901.xlsx'),
+  core: path.join(DATA_DIR, '2026-2027学年研究生核心课和专业课列表（请先阅读表格最下方的说明）0901.xlsx'),
+  schedule: path.join(DATA_DIR, '2026年秋季学期课表0901.xlsx'),
 }
 
 const text = (value) => {
@@ -28,6 +28,33 @@ const text = (value) => {
 const num = (value) => Number.parseFloat(text(value)) || 0
 const splitMulti = (value) => text(value).split(/[；;\n、]/).map((item) => item.trim()).filter(Boolean)
 const uniq = (items) => [...new Set(items.filter(Boolean))]
+const disciplineCodeKey = (code) => text(code).toUpperCase().match(/^\d{6}([0-9A-Z]{4})/)?.[1] ?? ''
+const isEnglishACourseName = (name) => /^英语A(?:$|[-—_（(])/.test(text(name).normalize('NFKC').replace(/\s+/g, ''))
+const inferFirstLevelDisciplines = (courses) => {
+  const candidates = new Map()
+  const codeCandidates = new Map()
+  for (const course of courses) {
+    if (!course.subject || !course.firstLevelDiscipline) continue
+    const values = candidates.get(course.subject) ?? new Set()
+    values.add(course.firstLevelDiscipline)
+    candidates.set(course.subject, values)
+    const codeKey = disciplineCodeKey(course.baseCode)
+    if (codeKey) {
+      const mappingKey = `${course.subject}\u0000${codeKey}`
+      const codeValues = codeCandidates.get(mappingKey) ?? new Set()
+      codeValues.add(course.firstLevelDiscipline)
+      codeCandidates.set(mappingKey, codeValues)
+    }
+  }
+  return courses.map((course) => {
+    if (course.firstLevelDiscipline || !course.subject) return course
+    const values = [...(candidates.get(course.subject) ?? [])]
+    if (values.length === 1) return { ...course, firstLevelDiscipline: values[0] }
+    const codeKey = disciplineCodeKey(course.baseCode)
+    const codeValues = codeKey ? [...(codeCandidates.get(`${course.subject}\u0000${codeKey}`) ?? [])] : []
+    return codeValues.length === 1 ? { ...course, firstLevelDiscipline: codeValues[0] } : course
+  })
+}
 const courseId = (term, code) => `${term}:${code}`
 const offeringId = (term, code) => `${term}:${code}`
 const isBenYanCode = (code) => /^B/i.test(code) || /^\d{5}B/i.test(code)
@@ -92,6 +119,7 @@ const courseMap = new Map()
 const offeringMap = new Map()
 const diagnostics = []
 const scheduleOnlyCodes = new Set()
+const sourceStats = { planFall: 0, planSpring: 0, coreFall: 0, coreSpring: 0 }
 
 function ensureCourse(term, code, partial = {}) {
   const id = courseId(term, code)
@@ -129,17 +157,19 @@ function ensureCourse(term, code, partial = {}) {
     professionalProgramCourse: current.professionalProgramCourse || partial.professionalProgramCourse === true,
     isBenYan: current.isBenYan || partial.isBenYan === true,
   }
-  if (merged.name === '英语A') merged.hours = ENGLISH_A_HOURS
+  if (isEnglishACourseName(current.name) || isEnglishACourseName(partial.name) || isEnglishACourseName(merged.name)) merged.hours = ENGLISH_A_HOURS
   courseMap.set(id, merged)
   return merged
 }
 
 function parsePlanSheet(sheet, term) {
   const headerRow = 2
+  const statKey = term === FALL ? 'planFall' : 'planSpring'
   for (let rowNumber = headerRow + 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
     const row = sheet.getRow(rowNumber)
     const code = text(row.getCell(3).value)
     if (!code) continue
+    sourceStats[statKey] += 1
     ensureCourse(term, code, {
       name: text(row.getCell(4).value),
       department: text(row.getCell(2).value),
@@ -157,10 +187,12 @@ parsePlanSheet(planBook.worksheets[0], FALL)
 parsePlanSheet(planBook.worksheets[1], SPRING)
 
 function parseCoreSheet(sheet, term) {
+  const statKey = term === FALL ? 'coreFall' : 'coreSpring'
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
     const row = sheet.getRow(rowNumber)
     const code = text(row.getCell(3).value)
     if (!code || /^说明[：:]/.test(code)) continue
+    sourceStats[statKey] += 1
     ensureCourse(term, code, {
       name: text(row.getCell(4).value),
       department: text(row.getCell(2).value),
@@ -195,10 +227,12 @@ function resolveBaseCode(code) {
 }
 
 const scheduleSheet = scheduleBook.worksheets[0]
+let scheduleRows = 0
 for (let rowNumber = 2; rowNumber <= scheduleSheet.rowCount; rowNumber += 1) {
   const row = scheduleSheet.getRow(rowNumber)
   const code = text(row.getCell(3).value)
   if (!code) continue
+  scheduleRows += 1
   const baseCode = resolveBaseCode(code)
   const scheduleName = text(row.getCell(4).value)
   const currentBase = courseMap.get(courseId(FALL, baseCode))
@@ -246,14 +280,14 @@ for (let rowNumber = 2; rowNumber <= scheduleSheet.rowCount; rowNumber += 1) {
   offeringMap.set(id, offering)
 }
 
-const courses = [...courseMap.values()].sort((a, b) => a.term.localeCompare(b.term) || a.department.localeCompare(b.department, 'zh-CN') || a.name.localeCompare(b.name, 'zh-CN'))
+const courses = inferFirstLevelDisciplines([...courseMap.values()]).sort((a, b) => a.term.localeCompare(b.term) || a.department.localeCompare(b.department, 'zh-CN') || a.name.localeCompare(b.name, 'zh-CN'))
 const offerings = [...offeringMap.values()].sort((a, b) => a.offeringCode.localeCompare(b.offeringCode))
 const disciplines = uniq(courses.filter((course) => !course.professionalProgramCourse).flatMap((course) => [course.firstLevelDiscipline, ...course.sharedFirstLevels])).sort((a, b) => a.localeCompare(b, 'zh-CN'))
 const professionalFields = uniq(courses.filter((course) => course.professionalProgramCourse).flatMap((course) => [course.subject, ...course.sharedSubjects])).sort((a, b) => a.localeCompare(b, 'zh-CN'))
 
 const catalog = {
   schemaVersion: 1,
-  dataVersion: '2026-08-28',
+  dataVersion: '2026-09-01',
   generatedAt: new Date().toISOString(),
   termConfig: {
     fall: { label: '2026 秋季', startDate: '2026-08-31', weeks: 22, hasSchedule: true },
@@ -265,12 +299,9 @@ const catalog = {
   professionalFields,
   diagnostics,
   stats: {
-    planFall: 1498,
-    planSpring: 1476,
-    coreFall: 1025,
-    coreSpring: 876,
+    ...sourceStats,
     scheduleOfferings: offerings.length,
-    scheduleRows: scheduleSheet.rowCount - 1,
+    scheduleRows,
     scheduleMeetings: offerings.reduce((total, offering) => total + offering.meetings.length, 0),
   },
 }

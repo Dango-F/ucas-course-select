@@ -101,6 +101,19 @@ export const usePlannerStore = defineStore('planner', () => {
   const formalEntries = computed(() => planEntries.value.filter((entry) => entry.status === 'formal'))
   const backupEntries = computed(() => planEntries.value.filter((entry) => entry.status === 'backup'))
 
+  function sanitizeDegreeCourseEntries(): boolean {
+    if (!profile.value) return false
+    let changed = false
+    const currentIndex = createCatalogIndex(catalog.value)
+    planEntries.value = planEntries.value.map((entry) => {
+      const course = currentIndex.courses.get(entry.courseId)
+      if (!entry.isDegreeCourse || (course && isDegreeCourseEligible(profile.value!, course))) return entry
+      changed = true
+      return { ...entry, isDegreeCourse: false, approvalState: 'none' }
+    })
+    return changed
+  }
+
   async function hydrate() {
     loading.value = true
     const [response, persisted] = await Promise.all([fetch('/data/catalog.json'), loadPersistedState()])
@@ -111,6 +124,7 @@ export const usePlannerStore = defineStore('planner', () => {
       planEntries.value = persisted.planEntries ?? []
       completedCourses.value = persisted.completedCourses ?? []
       activeTerm.value = persisted.activeTerm ?? 'fall'
+      if (sanitizeDegreeCourseEntries()) await persist()
     }
     hydrated.value = true
     loading.value = false
@@ -122,7 +136,7 @@ export const usePlannerStore = defineStore('planner', () => {
 
   async function persist() { await savePersistedState(snapshot()) }
 
-  async function setProfile(value: StudentProfile) { profile.value = value; await persist() }
+  async function setProfile(value: StudentProfile) { profile.value = value; sanitizeDegreeCourseEntries(); await persist() }
   async function setTerm(term: Term) { activeTerm.value = term; await persist() }
 
   function duplicateReason(choice: CourseChoice): string | null {
@@ -224,7 +238,7 @@ export const usePlannerStore = defineStore('planner', () => {
     if (!entry) return
     const course = index.value.courses.get(entry.courseId)
     if (enabled && (!profile.value || !course || !isDegreeCourseEligible(profile.value, course))) {
-      lastNotice.value = '只有专业类课程可以设置为专业学位课。'
+      lastNotice.value = '只有学科核心课、专业核心课和专业课可以设置为学位课。'
       return
     }
     entry.isDegreeCourse = enabled
@@ -234,7 +248,7 @@ export const usePlannerStore = defineStore('planner', () => {
 
   async function addCompleted(course: Omit<CompletedCourse, 'id'>) { completedCourses.value.push({ ...course, id: crypto.randomUUID() }); await persist() }
   async function removeCompleted(id: string) { completedCourses.value = completedCourses.value.filter((course) => course.id !== id); await persist() }
-  async function applyImport(preview: ImportPreview) { catalog.value = mergeCatalog(catalog.value, preview); lastNotice.value = `已合并 ${preview.rowsRead} 行课程数据`; await persist() }
+  async function applyImport(preview: ImportPreview) { catalog.value = mergeCatalog(catalog.value, preview); sanitizeDegreeCourseEntries(); lastNotice.value = `已合并 ${preview.rowsRead} 行课程数据`; await persist() }
 
   async function restore(state: PersistedState) {
     if (state.customCatalog) catalog.value = normalizeCatalog(state.customCatalog)
@@ -242,6 +256,7 @@ export const usePlannerStore = defineStore('planner', () => {
     planEntries.value = state.planEntries ?? []
     completedCourses.value = state.completedCourses ?? []
     activeTerm.value = state.activeTerm ?? 'fall'
+    sanitizeDegreeCourseEntries()
     await persist()
   }
 

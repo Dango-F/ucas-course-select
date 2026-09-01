@@ -62,7 +62,7 @@ async function finish() {
       <div class="setup-constellation" aria-hidden="true"><i v-for="n in 7" :key="n" /></div>
       <img class="setup-logo" src="/branding/ucas-logo-horizontal-white.png" alt="中国科学院大学" />
       <p class="eyebrow">中国科学院大学 · 2026—2027</p>
-      <h1>中国科学院大学<br />研究生选课系统</h1>
+      <h1>中国科学院大学<br />研究生选课系统<span class="setup-version">v1.0.2</span></h1>
       <p class="setup-description">要求按学生类别和学科归属确定；设置仅保存在本机，可随时修改。</p>
       <div class="privacy-note"><ShieldCheck :size="19" /><span>不登录学校账号<br />不上传个人选课数据</span></div>
     </section>
@@ -81,7 +81,7 @@ async function finish() {
           <label class="field-label"><span>姓名</span><input v-model="name" autocomplete="name" placeholder="请输入姓名" /></label>
           <label class="field-label"><span>学号</span><input v-model="studentId" inputmode="numeric" autocomplete="off" placeholder="请输入学号" /></label>
           <label class="field-label full"><span>培养单位</span><input v-model="trainingUnit" autocomplete="organization" placeholder="例如：中国科学院大学计算机科学与技术学院" /></label>
-          <label class="field-label full"><span>所学专业</span><input v-model="major" autocomplete="off" placeholder="例如：计算机应用技术" /><small>用于身份展示和导出选课单；“只看本学科”按后续选择的一级学科筛选。</small></label>
+          <label class="field-label full"><span>所学专业</span><input v-model="major" autocomplete="off" placeholder="例如：计算机应用技术" /><small>用于身份展示和导出选课单；“只看本学科”按后续选择的{{ isProfessional ? '关联一级学科（推断）' : '一级学科' }}筛选。</small></label>
         </div>
       </div>
 
@@ -97,16 +97,16 @@ async function finish() {
 
       <div v-else-if="step === 2" class="setup-panel">
         <p class="section-kicker">课程归属</p>
-        <h2>选择一级学科</h2>
+        <h2>选择{{ isProfessional ? '关联一级学科（推断）' : '一级学科' }}</h2>
         <label class="field-label">
-          <span>一级学科</span>
+          <span>{{ isProfessional ? '关联一级学科（推断）' : '一级学科' }}</span>
           <select v-model="discipline"><option value="" disabled>请选择</option><option v-for="item in disciplineOptions" :key="item" :value="item">{{ item }}</option></select>
-          <small>所有学生类别均以一级学科作为“只看本学科”的筛选依据。</small>
+          <small>{{ isProfessional ? '用于关联学术一级学科，并作为“只看本学科”的筛选依据。' : '作为“只看本学科”的筛选依据。' }}</small>
         </label>
         <label v-if="isProfessional" class="field-label">
           <span>专业学位类别 / 领域（选填）</span>
           <select v-model="professionalField"><option value="">暂不选择</option><option v-for="item in professionalFieldOptions" :key="item" :value="item">{{ item }}</option></select>
-          <small>用于补充识别适用于该类别或领域的培养课程，不改变“只看本学科”的一级学科口径。</small>
+          <small>用于补充识别适用于该类别或领域的培养课程，不改变“只看本学科”的关联一级学科口径。</small>
         </label>
         <label class="field-label">
           <span>常用校区</span>
