@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Trash2 } from 'lucide-vue-next'
 import { vFitScheduleCard } from '../directives/fitScheduleCard'
 import type { Meeting, ScheduleExportRow, TranscriptIdentity } from '../types'
 
@@ -8,7 +9,11 @@ const props = defineProps<{
   rows: ScheduleExportRow[]
   termLabel: string
   generatedDate: string
+  totalOnly?: boolean
+  deletable?: boolean
 }>()
+
+const emit = defineEmits<{ remove: [entryId: string] }>()
 
 const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const periodTimes = [
@@ -127,6 +132,10 @@ function blockStyle(block: ScheduleWeeklyBlock) {
     '--lanes': block.laneCount,
   }
 }
+
+function removeCourse(row: ScheduleExportRow) {
+  if (props.deletable && row.entryId) emit('remove', row.entryId)
+}
 </script>
 
 <template>
@@ -173,7 +182,7 @@ function blockStyle(block: ScheduleWeeklyBlock) {
               :key="block.id"
               v-fit-schedule-card="{ minScale: 0.28, maxScale: 1.08 }"
               class="schedule-weekly-block"
-              :class="{ degree: block.row.degreeLabel.startsWith('学位课'), conflict: block.row.conflict, 'has-lanes': block.laneCount > 1 }"
+              :class="{ degree: block.row.degreeLabel.startsWith('学位课'), conflict: block.row.conflict, 'has-lanes': block.laneCount > 1, 'has-remove-action': deletable && block.row.entryId }"
               :style="blockStyle(block)"
               :title="`${block.row.name}｜${block.row.courseCode}｜主讲：${block.row.teachers || '待定'}｜首席：${block.row.leadProfessor || '待定'}｜考核：${block.row.examMethod || '待定'}｜${block.meeting.rawWeeks}｜${block.meeting.rawTime}｜${block.meeting.room || '教室待定'}`"
             >
@@ -186,6 +195,9 @@ function blockStyle(block: ScheduleWeeklyBlock) {
                 <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>主讲</b><span>{{ block.row.teachers || '待定' }}</span></small>
                 <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>首席</b><span>{{ block.row.leadProfessor || '待定' }}</span></small>
                 <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>考核</b><span>{{ block.row.examMethod || '待定' }}</span></small>
+              </div>
+              <div v-if="deletable && block.row.entryId" class="schedule-weekly-block-actions">
+                <button class="schedule-remove-button" type="button" :aria-label="`删除${block.row.name}`" :title="`删除${block.row.name}`" @click.stop="removeCourse(block.row)"><Trash2 :size="12" /></button>
               </div>
             </article>
 
@@ -206,6 +218,7 @@ function blockStyle(block: ScheduleWeeklyBlock) {
       </footer>
     </div>
 
+    <template v-if="!totalOnly">
     <div v-for="(detailRows, detailPageIndex) in detailPages" :key="`detail-page-${detailPageIndex}`" class="schedule-export-page schedule-detail-page">
       <div class="schedule-table-heading schedule-detail-heading">
         <div>
@@ -256,5 +269,6 @@ function blockStyle(block: ScheduleWeeklyBlock) {
         <p>生成日期：{{ generatedDate }}　·　以培养方案、导师、培养单位及学校正式系统为准</p>
       </footer>
     </div>
+    </template>
   </section>
 </template>

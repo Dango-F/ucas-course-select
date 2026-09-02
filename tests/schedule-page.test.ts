@@ -17,8 +17,22 @@ vi.mock('../src/stores/planner', () => ({ usePlannerStore: () => store }))
 import SchedulePage from '../src/pages/SchedulePage.vue'
 
 describe('周课表教学周选择器', () => {
-  it('显示到第 22 周并允许选择', () => {
+  it('默认显示总表，并可切换到周次表', async () => {
     const wrapper = mount(SchedulePage)
+
+    expect(wrapper.get('.schedule-view-switch button:first-child').classes()).toContain('active')
+    expect(wrapper.find('.schedule-total-wrap').exists()).toBe(true)
+    expect(wrapper.find('.week-dots').exists()).toBe(false)
+
+    await wrapper.get('.schedule-view-switch button:last-child').trigger('click')
+    expect(wrapper.find('.week-dots').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('显示到第 22 周并允许选择', async () => {
+    const wrapper = mount(SchedulePage)
+    await wrapper.get('.schedule-view-switch button:last-child').trigger('click')
     const weekButtons = wrapper.findAll('.week-dots button')
 
     expect(weekButtons).toHaveLength(22)
@@ -34,11 +48,12 @@ describe('周课表教学周选择器', () => {
     ]
     store.planEntries = entries
     store.formalEntries = entries
-    store.index.courses.set('course-a', { term: 'fall', name: '课程 A', baseCode: 'A', credits: 2 })
-    store.index.courses.set('course-b', { term: 'fall', name: '课程 B', baseCode: 'B', credits: 2 })
+    store.index.courses.set('course-a', { term: 'fall', name: '课程 A', baseCode: 'A', credits: 2, campuses: [] })
+    store.index.courses.set('course-b', { term: 'fall', name: '课程 B', baseCode: 'B', credits: 2, campuses: [] })
     store.conflicts = [{ entryA: 'entry-a', entryB: 'entry-b', weekday: 1, periods: [1, 2], weeks: [3, 21] }]
 
     const wrapper = mount(SchedulePage)
+    await wrapper.get('.schedule-view-switch button:last-child').trigger('click')
     const weekButtons = wrapper.findAll('.week-dots button')
 
     expect(weekButtons.at(2)?.classes()).toContain('conflict')
@@ -53,6 +68,27 @@ describe('周课表教学周选择器', () => {
     store.formalEntries = []
     store.conflicts = []
     store.index.courses.clear()
+  })
+
+  it('课程卡片将课程代码、教学周和上课时间分成独立行', async () => {
+    const entry = { id: 'entry-card', courseId: 'course-card', offeringId: 'offering-card' }
+    store.planEntries = [entry]
+    store.formalEntries = [entry]
+    store.index.courses.set('course-card', { id: 'course-card', term: 'fall', name: '卡片课程', baseCode: 'CARD-BASE', credits: 2, campuses: [] })
+    store.index.offerings.set('offering-card', { id: 'offering-card', name: '卡片课程班', offeringCode: 'CARD-01', teachers: [], leadProfessor: '', examMethod: '闭卷考试', meetings: [{ weeks: [1, 2], weekday: 1, periods: [1, 2], room: '教室101', rawWeeks: '第1-2周', rawTime: '周一(1-2)' }] })
+
+    const wrapper = mount(SchedulePage)
+    await wrapper.get('.schedule-view-switch button:last-child').trigger('click')
+    const card = wrapper.get('.schedule-block')
+    expect(card.get('.schedule-card-fit-code').text()).toBe('CARD-01')
+    expect(card.get('.schedule-card-fit-weeks').text()).toBe('第1-2周')
+    expect(card.get('.schedule-card-fit-time').text()).toContain('周一(1-2)')
+
+    wrapper.unmount()
+    store.planEntries = []
+    store.formalEntries = []
+    store.index.courses.clear()
+    store.index.offerings.clear()
   })
 
   it('打印时克隆当前预览，确保预览与 PDF 使用同一份页面结构', async () => {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BookmarkPlus, Check, Copy, Filter, Search, SlidersHorizontal, Trash2 } from 'lucide-vue-next'
+import { BookOpen, BookmarkPlus, CalendarDays, Check, Copy, Filter, Search, SlidersHorizontal, Trash2 } from 'lucide-vue-next'
 import CourseDrawer from '../components/CourseDrawer.vue'
+import LiveSchedulePanel from '../components/LiveSchedulePanel.vue'
 import PageHeader from '../components/PageHeader.vue'
 import { isVisibleForOwnDiscipline, ownDisciplineCoursePriority } from '../domain/catalogFilters'
 import { usePlannerStore } from '../stores/planner'
@@ -9,7 +10,9 @@ import type { CourseChoice, PlanStatus } from '../types'
 
 const store = usePlannerStore()
 const FILTER_STORAGE_KEY = 'ucas-course-catalog-filters-v3'
+const VIEW_MODE_STORAGE_KEY = 'ucas-course-catalog-view-mode-v2'
 type CatalogFilterState = { query: string; attribute: string; campus: string; level: string; disciplineOnly: boolean }
+type CatalogViewMode = 'catalog' | 'live'
 
 function readFilters(): CatalogFilterState {
   const fallback: CatalogFilterState = { query: '', attribute: '', campus: '雁栖湖', level: '', disciplineOnly: true }
@@ -27,16 +30,26 @@ const attribute = ref(savedFilters.attribute)
 const campus = ref(savedFilters.campus)
 const level = ref(savedFilters.level)
 const disciplineOnly = ref(savedFilters.disciplineOnly)
+const viewMode = ref<CatalogViewMode>(readViewMode())
 const selected = ref<CourseChoice | null>(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(650)
 const DESKTOP_ITEM_HEIGHT = 138
+const LIVE_ITEM_HEIGHT = 120
 const MOBILE_ITEM_HEIGHT = 372
 const MOBILE_EXTRA_MEETING_HEIGHT = 44
 const mobileLayout = ref(window.innerWidth <= 900)
 const retakeChoice = ref<{ choice: CourseChoice; status: PlanStatus; reason: string } | null>(null)
 const copiedField = ref('')
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function readViewMode(): CatalogViewMode {
+  try {
+    return sessionStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'catalog' ? 'catalog' : 'live'
+  } catch {
+    return 'live'
+  }
+}
 
 const attributes = computed(() => [...new Set(store.choices.map((choice) => choice.course.attribute).filter(Boolean))])
 const campuses = computed(() => [...new Set(store.choices.flatMap((choice) => [choice.offering?.campus, ...choice.course.campuses]).filter(Boolean))])
@@ -61,9 +74,12 @@ const filtered = computed(() => {
     : matches
 })
 
-const rowHeights = computed(() => filtered.value.map((choice) => mobileLayout.value
-  ? MOBILE_ITEM_HEIGHT + Math.max(0, (choice.offering?.meetings.length ?? 0) - 1) * MOBILE_EXTRA_MEETING_HEIGHT
-  : DESKTOP_ITEM_HEIGHT))
+const rowHeights = computed(() => filtered.value.map((choice) => {
+  if (viewMode.value === 'live') return LIVE_ITEM_HEIGHT
+  return mobileLayout.value
+    ? MOBILE_ITEM_HEIGHT + Math.max(0, (choice.offering?.meetings.length ?? 0) - 1) * MOBILE_EXTRA_MEETING_HEIGHT
+    : DESKTOP_ITEM_HEIGHT
+}))
 const rowOffsets = computed(() => {
   let offset = 0
   return rowHeights.value.map((height) => {
@@ -126,11 +142,26 @@ function saveFilters() {
   } catch { /* 隐私模式下无法写入时，筛选仍可正常使用 */ }
 }
 
+function setViewMode(mode: CatalogViewMode) {
+  viewMode.value = mode
+  try {
+    sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, mode)
+  } catch { /* 隐私模式下无法写入时，视图仍可正常切换 */ }
+}
+
 function clearFilters() { query.value = ''; attribute.value = ''; campus.value = ''; level.value = ''; disciplineOnly.value = false; saveFilters() }
 function syncItemHeight() { mobileLayout.value = window.innerWidth <= 900 }
 function remainingSeats(choice: CourseChoice) {
   const offering = choice.offering
   return offering?.capacity ? Math.max(0, offering.capacity - offering.enrolled) : null
+}
+
+function courseCampus(choice: CourseChoice) {
+  return choice.offering?.campus || choice.course.campuses[0] || '校区待定'
+}
+
+function courseAffiliation(choice: CourseChoice) {
+  return [...new Set([choice.course.subject, choice.course.firstLevelDiscipline].filter(Boolean))].join(' / ')
 }
 
 async function writeClipboard(text: string) {
@@ -171,9 +202,17 @@ watch([query, attribute, campus, level, disciplineOnly], saveFilters, { flush: '
 <template>
   <div class="page catalog-page">
     <PageHeader eyebrow="COURSE CATALOG" title="课程目录" :description="`${store.activeTerm === 'fall' ? '秋季含具体班级、教师和周次' : '春季为计划课，排课详情待导入'}。`">
-      <div class="catalog-count"><strong>{{ filtered.length.toLocaleString() }}</strong><span>个可选课程班</span></div>
+      <div class="catalog-header-tools">
+        <div class="catalog-view-switch" role="group" aria-label="课程目录显示模式">
+          <button :class="{ active: viewMode === 'catalog' }" :aria-pressed="viewMode === 'catalog'" @click="setViewMode('catalog')"><BookOpen :size="15" />课程目录</button>
+          <button :class="{ active: viewMode === 'live' }" :aria-pressed="viewMode === 'live'" @click="setViewMode('live')"><CalendarDays :size="15" />边选边看</button>
+        </div>
+        <div class="catalog-count"><strong>{{ filtered.length.toLocaleString() }}</strong><span>个可选课程班</span></div>
+      </div>
     </PageHeader>
 
+    <div class="catalog-selection-workspace" :class="{ 'live-mode': viewMode === 'live' }">
+      <div class="catalog-browser-pane">
     <section class="catalog-toolbar">
       <label class="search-box"><Search :size="18" /><input v-model="query" placeholder="搜索课程、编码、教师或院系" /></label>
       <select v-model="attribute" aria-label="课程属性"><option value="">全部属性</option><option v-for="item in attributes" :key="item">{{ item }}</option></select>
@@ -186,7 +225,7 @@ watch([query, attribute, campus, level, disciplineOnly], saveFilters, { flush: '
     <section class="catalog-table-head" aria-hidden="true"><span>课程与班级</span><span>培养归属</span><span>上课安排/考核方式</span><span>教师与名额</span><span>操作</span></section>
     <div class="virtual-course-list" @scroll="onScroll">
       <div class="virtual-spacer" :style="{ height: `${totalHeight}px` }">
-        <article v-for="(choice, index) in visible" :key="choice.id" class="course-row" :style="{ height: `${rowHeights[startIndex + index]}px`, transform: `translateY(${rowOffsets[startIndex + index]}px)` }">
+        <article v-for="(choice, index) in visible" :key="choice.id" :class="['course-row', { 'live-course-row': viewMode === 'live' }]" :style="{ height: `${rowHeights[startIndex + index]}px`, transform: `translateY(${rowOffsets[startIndex + index]}px)` }">
           <div class="course-identity">
             <div class="course-main">
               <div class="course-name-row">
@@ -196,17 +235,25 @@ watch([query, attribute, campus, level, disciplineOnly], saveFilters, { flush: '
               <div class="course-code-row">
                 <code>{{ choice.offering?.offeringCode ?? choice.course.baseCode }}</code>
                 <button class="copy-field-button" :class="{ copied: copiedField === `${choice.id}:code` }" :title="copiedField === `${choice.id}:code` ? '已复制课程代码' : '复制课程代码'" :aria-label="copiedField === `${choice.id}:code` ? '已复制课程代码' : '复制课程代码'" @click.stop="copyCourseText(choice.offering?.offeringCode ?? choice.course.baseCode, `${choice.id}:code`)"><Check v-if="copiedField === `${choice.id}:code`" :size="14" /><Copy v-else :size="14" /></button>
+                <template v-if="viewMode === 'live'">
+                  <i class="live-code-divider">|</i><span class="live-code-meta">{{ courseCampus(choice) }}</span><i class="live-code-divider">|</i><span class="live-code-meta department">{{ choice.course.department }}</span>
+                </template>
               </div>
               <div class="course-meta-row"><span>{{ choice.course.department }}</span><strong class="course-credits">{{ choice.course.credits }} <i>学分</i></strong></div>
+              <div v-if="viewMode === 'live'" class="live-course-facts"><span>{{ choice.course.hours }} 学时</span><strong class="course-credits">{{ choice.course.credits }} <i>学分</i></strong><span class="live-fact-exam">考核 · {{ choice.offering?.examMethod || '待定' }}</span><span class="live-fact-affiliation" :title="courseAffiliation(choice) ? `培养归属 · ${courseAffiliation(choice)}` : '培养归属待确认'">{{ courseAffiliation(choice) ? `培养归属 · ${courseAffiliation(choice)}` : '培养归属待确认' }}</span></div>
             </div>
             <div class="course-taxonomy"><div><span>{{ choice.course.attribute }}</span><span class="level-tag">{{ choice.course.level || '层次待定' }}</span><span v-if="choice.course.professionalProgramCourse" class="pro-tag">专业学位适用</span><span v-if="choice.course.isBenYan" class="b-tag">本研层次</span></div><p class="course-discipline"><b>所属学科：</b><span>{{ choice.course.subject || '未标注' }}</span><b>{{ choice.course.professionalProgramCourse ? '关联一级学科（推断）：' : '所属一级学科：' }}</b><span>{{ choice.course.firstLevelDiscipline || '待确认' }}</span></p></div>
           </div>
-          <div class="course-time"><div v-if="choice.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in choice.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>可加入方案，暂不参与冲突判断</span></p><p class="course-exam"><b>考核方式</b><span>{{ choice.offering?.examMethod || '待定' }}</span></p></div>
-          <div class="course-staff"><p><b>主讲</b><span>{{ choice.offering?.teachers.join('、') || '待定' }}</span></p><p v-if="choice.offering?.leadProfessor"><b>首席</b><span>{{ choice.offering.leadProfessor }}</span></p><div class="seat-status" :class="{ full: remainingSeats(choice) === 0 }"><span v-if="choice.offering?.capacity">名额 {{ choice.offering.enrolled }} / {{ choice.offering.capacity }}</span><span v-else>容量待定</span><strong v-if="remainingSeats(choice) !== null">{{ remainingSeats(choice) ? `余 ${remainingSeats(choice)}` : '已满' }}</strong></div></div>
+          <div class="course-time"><div v-if="choice.offering?.meetings.length" class="course-meeting-list"><p v-for="meeting in choice.offering.meetings" :key="`${meeting.rawTime}-${meeting.rawWeeks}-${meeting.room}`"><b>{{ meeting.rawTime }}</b><span>{{ meeting.rawWeeks }} · {{ meeting.room || '教室待定' }}</span></p></div><p v-else class="no-time"><b>排课待定</b><span>可加入方案，暂不参与冲突判断</span></p><p v-if="viewMode === 'live' && (choice.offering?.meetings.length ?? 0) > 1" class="live-meeting-more">另有 {{ (choice.offering?.meetings.length ?? 0) - 1 }} 个上课时段</p><p class="course-exam"><b>考核方式</b><span>{{ choice.offering?.examMethod || '待定' }}</span></p></div>
+          <div class="course-staff"><p><b>主讲</b><span>{{ choice.offering?.teachers.join('、') || '待定' }}</span></p><p><b>首席</b><span>{{ choice.offering?.leadProfessor || '待定' }}</span></p><div class="seat-status" :class="{ full: remainingSeats(choice) === 0 }"><span v-if="choice.offering?.capacity">名额 {{ choice.offering.enrolled }} / {{ choice.offering.capacity }}</span><span v-else>容量待定</span><strong v-if="remainingSeats(choice) !== null">{{ remainingSeats(choice) ? `余 ${remainingSeats(choice)}` : '已满' }}</strong></div></div>
           <div class="course-actions"><template v-if="alreadyAdded(choice)"><span class="added"><Check :size="16" /> 已加入</span><button class="icon-action danger-ghost" title="取消选课" :aria-label="`取消${choice.offering?.name || choice.course.name}`" @click.stop="removeChoice(choice)"><Trash2 :size="18" /></button></template><template v-else><button class="icon-action" title="加入备选" @click="add(choice, 'backup')"><BookmarkPlus :size="18" /></button><button class="button small primary" :disabled="Boolean(store.formalAddBlockReason(choice))" :title="store.formalAddBlockReason(choice) || undefined" @click="add(choice, 'formal')">加入方案</button></template></div>
         </article>
       </div>
       <div v-if="!filtered.length" class="catalog-empty"><Search :size="28" /><strong>没有匹配课程</strong><p>放宽筛选条件，或检查当前学期。</p><button class="button secondary" @click="clearFilters">清除筛选</button></div>
+    </div>
+      </div>
+
+      <LiveSchedulePanel v-if="viewMode === 'live'" />
     </div>
 
     <CourseDrawer :choice="selected" @close="selected = null" @add="(status) => selected && add(selected, status)" />

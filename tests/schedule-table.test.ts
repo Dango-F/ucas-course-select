@@ -72,4 +72,14 @@ describe('课程总表预览', () => {
     expect(detailPages.every((page) => page.findAll('tbody tr').length <= 5)).toBe(true)
     expect(wrapper.findAll('.detail-meeting-cell b').every((meeting) => !meeting.text().startsWith('周周'))).toBe(true)
   })
+
+  it('可在总表课程卡片右下角通过垃圾桶删除课程', async () => {
+    const wrapper = mount(ScheduleTable, { props: { identity, rows: [{ ...row, entryId: 'entry-1' }], termLabel: '2026 秋季', generatedDate: '2026年8月31日', totalOnly: true, deletable: true } })
+    const removeButton = wrapper.get('.schedule-weekly-block .schedule-remove-button')
+
+    expect(removeButton.attributes('aria-label')).toBe('删除矩阵分析与应用')
+    expect(removeButton.element.querySelector('svg')).not.toBeNull()
+    await removeButton.trigger('click')
+    expect(wrapper.emitted('remove')).toEqual([['entry-1']])
+  })
 })

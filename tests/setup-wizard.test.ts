@@ -24,7 +24,7 @@ describe('培养信息设置', () => {
   it('工程硕士先选择一级学科，并可选填专业学位类别或领域', async () => {
     setProfile.mockClear()
     const wrapper = mount(SetupWizard, { props: { initialProfile: null, canCancel: false } })
-    expect(wrapper.get('.setup-version').text()).toBe('v1.0.4')
+    expect(wrapper.get('.setup-version').text()).toBe('v1.1.0')
     const inputs = wrapper.findAll('input')
     await inputs[0].setValue('测试学生')
     await inputs[1].setValue('20260001')

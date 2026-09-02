@@ -80,6 +80,7 @@ export interface CourseOffering {
 
 export interface ScheduleExportRow {
   sequence: number
+  entryId?: string
   term: Term
   name: string
   courseCode: string

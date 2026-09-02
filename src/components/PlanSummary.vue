@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { AlertTriangle, ArrowRight, ChevronLeft, ChevronRight, Layers3 } from 'lucide-vue-next'
+import { AlertTriangle, ArrowRight, ChevronLeft, ChevronRight, Layers3, Trash2 } from 'lucide-vue-next'
 import { ownDisciplinePlanPriority } from '../domain/catalogFilters'
 import { usePlannerStore } from '../stores/planner'
-import type { Course, CourseOffering, PlanEntry, Term } from '../types'
+import type { Course, CourseOffering, PlanEntry } from '../types'
 
 const PAGE_SIZE = 10
 const store = usePlannerStore()
@@ -41,9 +41,6 @@ function movePage(step: number) {
   activePage.value = (currentPage.value + step + pages.value.length) % pages.value.length
 }
 
-function termLabel(term: Term) {
-  return term === 'fall' ? '2026 秋' : '2027 春'
-}
 </script>
 
 <template>
@@ -70,7 +67,7 @@ function termLabel(term: Term) {
                   <strong>{{ row.course.name }}</strong>
                   <small>{{ row.course.credits }} 学分 · {{ row.course.attribute }}</small>
                 </span>
-                <span class="summary-course-term">{{ termLabel(row.course.term) }}</span>
+                <button class="summary-course-remove" :aria-label="`删除课程 ${row.course.name}`" title="删除课程" @click="store.removeEntry(row.entry.id)"><Trash2 :size="16" /></button>
               </article>
             </div>
           </section>

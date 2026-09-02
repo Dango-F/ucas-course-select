@@ -4,12 +4,14 @@ import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, Printer, Trash2,
 import PageHeader from '../components/PageHeader.vue'
 import ScheduleTable from '../components/ScheduleTable.vue'
 import { categoryLabels } from '../domain/requirements'
+import { buildScheduleBlocks, buildScheduleExportRows, type ScheduleBlock } from '../domain/schedule'
 import { vFitScheduleCard } from '../directives/fitScheduleCard'
 import { usePlannerStore } from '../stores/planner'
-import type { Course, CourseConflict, CourseOffering, Meeting, PlanEntry, ScheduleExportRow, TranscriptIdentity } from '../types'
+import type { Course, CourseConflict, CourseOffering, PlanEntry, TranscriptIdentity } from '../types'
 
 const store = usePlannerStore()
 const selectedWeek = ref(1)
+const scheduleView = ref<'week' | 'total'>('total')
 const scheduleExportOpen = ref(false)
 const scheduleExportWorking = ref(false)
 const scheduleExportError = ref('')
@@ -47,7 +49,6 @@ const weekLabel = computed(() => {
 })
 
 type ConflictGroup = { entryIds: string[]; conflicts: CourseConflict[]; courses: Array<{ entry: PlanEntry; course: Course; offering: CourseOffering | null }> }
-type ScheduleBlock = { entry: PlanEntry; course: Course; offering: CourseOffering; meeting: Meeting; start: number; span: number; conflict: boolean; lane: number; laneCount: number }
 
 const activeConflicts = computed(() => store.conflicts.filter((conflict) => {
   const entry = store.planEntries.find((item) => item.id === conflict.entryA)
@@ -84,101 +85,13 @@ const conflictGroups = computed<ConflictGroup[]>(() => {
   }))
 })
 
-function scheduleRowOrder(row: ScheduleExportRow): [number, number, string] {
-  const firstMeeting = row.meetings[0]
-  return [firstMeeting?.weekday ?? 99, firstMeeting ? Math.min(...firstMeeting.periods) : 99, row.name]
-}
-
-const scheduleRows = computed<ScheduleExportRow[]>(() => store.formalEntries.flatMap((entry) => {
-  const course = store.index.courses.get(entry.courseId)
-  if (!course || course.term !== store.activeTerm) return []
-  const offering = entry.offeringId ? store.index.offerings.get(entry.offeringId) ?? null : null
-  const remaining = offering?.capacity ? Math.max(0, offering.capacity - offering.enrolled) : null
-  return [{
-    sequence: 0,
-    term: course.term,
-    name: offering?.name || course.name,
-    courseCode: offering?.offeringCode || course.baseCode,
-    attribute: course.attribute,
-    level: course.level,
-    hours: course.hours,
-    credits: course.credits,
-    degreeLabel: entry.isDegreeCourse ? `学位课${entry.approvalState === 'pending' ? '·待确认' : ''}` : '普通课程',
-    teachers: offering?.teachers.join('、') || '',
-    leadProfessor: offering?.leadProfessor || '',
-    campus: offering?.campus || course.campuses.join('、'),
-    capacityLabel: offering?.capacity ? `名额 ${offering.enrolled} / ${offering.capacity} · 余 ${remaining}` : '容量待定',
-    teachingMethod: offering?.teachingMethod || '',
-    examMethod: offering?.examMethod || '',
-    meetings: offering?.meetings ?? [],
-    conflict: conflictIds.value.has(entry.id),
-  }]
-}).sort((left, right) => {
-  const leftOrder = scheduleRowOrder(left); const rightOrder = scheduleRowOrder(right)
-  return leftOrder[0] - rightOrder[0] || leftOrder[1] - rightOrder[1] || leftOrder[2].localeCompare(rightOrder[2], 'zh-CN')
-}).map((row, index) => ({ ...row, sequence: index + 1 })))
-
-function meetingsOverlap(left: Meeting, right: Meeting) {
-  return left.weekday === right.weekday && left.periods.some((period) => right.periods.includes(period))
-}
+const scheduleRows = computed(() => buildScheduleExportRows(store.formalEntries, store.index, store.activeTerm, conflictIds.value))
 
 watch(weekCount, (count) => {
   if (selectedWeek.value > count) selectedWeek.value = count
 })
 
-const blocks = computed<ScheduleBlock[]>(() => {
-  const rawBlocks = store.formalEntries.flatMap((entry) => {
-    const course = store.index.courses.get(entry.courseId)
-    const offering = entry.offeringId ? store.index.offerings.get(entry.offeringId) : null
-    if (!course || !offering || course.term !== store.activeTerm) return []
-    return offering.meetings.filter((meeting) => meeting.weeks.includes(selectedWeek.value)).map((meeting) => ({
-      entry, course, offering, meeting,
-      start: Math.min(...meeting.periods), span: meeting.periods.length,
-      conflict: conflictIds.value.has(entry.id),
-      lane: 0, laneCount: 1,
-    }))
-  })
-
-  const lanes = Array.from({ length: rawBlocks.length }, () => 0)
-  const laneCounts = Array.from({ length: rawBlocks.length }, () => 1)
-  const visited = new Set<number>()
-
-  rawBlocks.forEach((_, seedIndex) => {
-    if (visited.has(seedIndex)) return
-    const component: number[] = []
-    const pending = [seedIndex]
-    visited.add(seedIndex)
-    while (pending.length) {
-      const currentIndex = pending.pop()!
-      component.push(currentIndex)
-      rawBlocks.forEach((candidate, candidateIndex) => {
-        if (!visited.has(candidateIndex) && meetingsOverlap(rawBlocks[currentIndex].meeting, candidate.meeting)) {
-          visited.add(candidateIndex)
-          pending.push(candidateIndex)
-        }
-      })
-    }
-
-    const ordered = [...component].sort((left, right) => rawBlocks[left].start - rawBlocks[right].start || rawBlocks[left].span - rawBlocks[right].span)
-    ordered.forEach((blockIndex, orderIndex) => {
-      const used = new Set<number>()
-      ordered.slice(0, orderIndex).forEach((otherIndex) => {
-        if (meetingsOverlap(rawBlocks[blockIndex].meeting, rawBlocks[otherIndex].meeting)) used.add(lanes[otherIndex])
-      })
-      let lane = 0
-      while (used.has(lane)) lane += 1
-      lanes[blockIndex] = lane
-    })
-    const componentLaneCount = Math.max(...component.map((index) => lanes[index])) + 1
-    component.forEach((index) => { laneCounts[index] = componentLaneCount })
-  })
-
-  return rawBlocks.map((block, index) => ({
-    ...block,
-    lane: lanes[index],
-    laneCount: laneCounts[index],
-  }))
-})
+const blocks = computed<ScheduleBlock[]>(() => buildScheduleBlocks(store.formalEntries, store.index, store.activeTerm, selectedWeek.value, conflictIds.value))
 
 function changeWeek(delta: number) { selectedWeek.value = Math.min(weekCount.value, Math.max(1, selectedWeek.value + delta)) }
 async function removeScheduleEntry(entryId: string) { await store.removeEntry(entryId) }
@@ -218,7 +131,14 @@ onBeforeUnmount(cleanupSchedulePrint)
 <template>
   <div class="page schedule-page">
       <PageHeader eyebrow="WEEKLY SCHEDULE" title="周课表" description="间断周、周末补课和多时段安排会按实际教学周展开。">
-      <div class="schedule-header-actions"><button class="button secondary" @click="openScheduleExport"><Printer :size="17" /> 导出课表总表</button><div class="week-control"><button class="icon-button" :disabled="selectedWeek === 1" @click="changeWeek(-1)"><ChevronLeft :size="18" /></button><strong>{{ weekLabel }}</strong><button class="icon-button" :disabled="selectedWeek === weekCount" @click="changeWeek(1)"><ChevronRight :size="18" /></button></div></div>
+      <div class="schedule-header-actions">
+        <div class="live-schedule-view-switch schedule-view-switch" role="tablist" aria-label="周课表视图">
+          <button type="button" role="tab" :class="{ active: scheduleView === 'total' }" :aria-selected="scheduleView === 'total'" @click="scheduleView = 'total'">总表</button>
+          <button type="button" role="tab" :class="{ active: scheduleView === 'week' }" :aria-selected="scheduleView === 'week'" @click="scheduleView = 'week'">周次表</button>
+        </div>
+        <button class="button secondary" @click="openScheduleExport"><Printer :size="17" /> 导出课表总表</button>
+        <div v-if="scheduleView === 'week'" class="week-control"><button class="icon-button" :disabled="selectedWeek === 1" @click="changeWeek(-1)"><ChevronLeft :size="18" /></button><strong>{{ weekLabel }}</strong><button class="icon-button" :disabled="selectedWeek === weekCount" @click="changeWeek(1)"><ChevronRight :size="18" /></button></div>
+      </div>
     </PageHeader>
 
     <section v-if="conflictGroups.length" class="schedule-conflict-board">
@@ -241,11 +161,11 @@ onBeforeUnmount(cleanupSchedulePrint)
       </div>
     </section>
 
-    <div class="week-dots" :style="{ '--week-count': weekCount }" aria-label="快速切换教学周"><button v-for="week in weekCount" :key="week" :class="{ active: selectedWeek === week, conflict: conflictWeeks.has(week) }" :aria-label="`第 ${week} 教学周${conflictWeeks.has(week) ? '，存在时间冲突' : ''}`" :title="conflictWeeks.has(week) ? `第 ${week} 教学周存在时间冲突` : `切换到第 ${week} 教学周`" @click="selectedWeek = week">{{ week }}</button></div>
+    <div v-if="scheduleView === 'week'" class="week-dots" :style="{ '--week-count': weekCount }" aria-label="快速切换教学周"><button v-for="week in weekCount" :key="week" :class="{ active: selectedWeek === week, conflict: conflictWeeks.has(week) }" :aria-label="`第 ${week} 教学周${conflictWeeks.has(week) ? '，存在时间冲突' : ''}`" :title="conflictWeeks.has(week) ? `第 ${week} 教学周存在时间冲突` : `切换到第 ${week} 教学周`" @click="selectedWeek = week">{{ week }}</button></div>
 
     <section v-if="store.activeTerm === 'spring' && !store.catalog.termConfig.spring.hasSchedule" class="spring-schedule-note"><CalendarOff :size="25" /><div><strong>春季详细排课尚未导入</strong><p>课程仍可加入方案和计算学分；导入含“星期节次”的春季课表后，此处会自动生成周课表。</p></div></section>
 
-    <section v-if="!(store.activeTerm === 'spring' && !store.catalog.termConfig.spring.hasSchedule)" class="schedule-wrap">
+    <section v-if="scheduleView === 'week' && !(store.activeTerm === 'spring' && !store.catalog.termConfig.spring.hasSchedule)" class="schedule-wrap">
       <div class="schedule-grid">
         <div class="schedule-corner">节次 / 时间</div>
         <div v-for="(day, index) in weekdays" :key="day" class="day-head" :style="{ gridColumn: index + 2 }">{{ day }}</div>
@@ -253,12 +173,13 @@ onBeforeUnmount(cleanupSchedulePrint)
           <div class="time-label" :style="{ gridColumn: 1, gridRow: period + 1 }"><strong>{{ period }}</strong><span>{{ times[period - 1] }}</span></div>
           <div v-for="day in 7" :key="`${period}-${day}`" class="schedule-cell" :style="{ gridColumn: day + 1, gridRow: period + 1 }" />
         </template>
-        <article v-for="block in blocks" :key="block.entry.id + block.meeting.rawWeeks + block.meeting.rawTime" v-fit-schedule-card="{ minScale: 0.32, maxScale: 1.16 }" class="schedule-block" :class="{ conflict: block.conflict, degree: block.entry.isDegreeCourse, 'has-lanes': block.laneCount > 1 }" :style="{ gridColumn: block.meeting.weekday + 1, gridRow: `${block.start + 1} / span ${block.span}`, '--lane': block.lane, '--lanes': block.laneCount }" :title="`${block.offering.name || block.course.name}｜${block.offering.offeringCode || block.course.baseCode}｜主讲：${block.offering.teachers.join('、') || '待定'}｜首席：${block.offering.leadProfessor || '待定'}｜考核：${block.offering.examMethod || '待定'}｜${block.meeting.rawTime}｜${block.meeting.room || '教室待定'}`">
+        <article v-for="block in blocks" :key="block.entry.id + block.meeting.rawWeeks + block.meeting.rawTime" v-fit-schedule-card="{ minScale: 0.32, maxScale: 1.16 }" class="schedule-block" :class="{ conflict: block.conflict, degree: block.entry.isDegreeCourse, 'has-lanes': block.laneCount > 1 }" :style="{ gridColumn: block.meeting.weekday + 1, gridRow: `${block.start + 1} / span ${block.span}`, '--lane': block.lane, '--lanes': block.laneCount }" :title="`${block.offering.name || block.course.name}｜${block.offering.offeringCode || block.course.baseCode}｜主讲：${block.offering.teachers.join('、') || '待定'}｜首席：${block.offering.leadProfessor || '待定'}｜考核：${block.offering.examMethod || '待定'}｜${block.meeting.rawWeeks}｜${block.meeting.rawTime}｜${block.meeting.room || '教室待定'}`">
           <div class="schedule-card-fit-content schedule-block-content">
             <span v-if="block.entry.isDegreeCourse" class="schedule-block-degree-label">学位课</span>
             <strong class="schedule-card-fit-title">{{ block.offering.name || block.course.name }}</strong>
             <code class="schedule-card-fit-code">{{ block.offering.offeringCode || block.course.baseCode }}</code>
-            <span class="schedule-card-fit-meta">{{ block.meeting.rawTime }} · {{ block.meeting.room || '教室待定' }}</span>
+            <small class="schedule-card-fit-meta schedule-card-fit-weeks">{{ block.meeting.rawWeeks }}</small>
+            <span class="schedule-card-fit-meta schedule-card-fit-time">{{ block.meeting.rawTime }} · {{ block.meeting.room || '教室待定' }}</span>
             <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>主讲</b><span>{{ block.offering.teachers.join('、') || '待定' }}</span></small>
             <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>首席</b><span>{{ block.offering.leadProfessor || '待定' }}</span></small>
             <small class="schedule-card-fit-meta schedule-card-fit-secondary"><b>考核</b><span>{{ block.offering.examMethod || '待定' }}</span></small>
@@ -268,7 +189,10 @@ onBeforeUnmount(cleanupSchedulePrint)
       </div>
       <div v-if="!blocks.length" class="schedule-empty-overlay"><CalendarOff :size="28" /><strong>本周没有正式课程</strong><span>切换教学周，或从课程目录加入正式方案。</span></div>
     </section>
-    <div class="schedule-legend"><span><i class="normal" />普通课程</span><span><i class="degree" />学位课</span><span><i class="conflict" />时间冲突</span></div>
+    <section v-else-if="scheduleView === 'total' && !(store.activeTerm === 'spring' && !store.catalog.termConfig.spring.hasSchedule)" class="schedule-total-wrap" aria-label="课表总表">
+      <ScheduleTable :identity="scheduleIdentity" :rows="scheduleRows" :term-label="scheduleTermLabel" :generated-date="generatedDate" :total-only="true" :deletable="true" @remove="removeScheduleEntry" />
+    </section>
+    <div v-if="scheduleView === 'week' && !(store.activeTerm === 'spring' && !store.catalog.termConfig.spring.hasSchedule)" class="schedule-legend"><span><i class="normal" />普通课程</span><span><i class="degree" />学位课</span><span><i class="conflict" />时间冲突</span></div>
 
     <Teleport to="body">
       <div v-if="scheduleExportOpen" class="schedule-export-layer" role="dialog" aria-modal="true" aria-label="课表总表导出预览">
@@ -278,7 +202,7 @@ onBeforeUnmount(cleanupSchedulePrint)
         </header>
         <div class="schedule-export-content">
           <div v-if="scheduleExportError" class="schedule-export-error"><AlertTriangle :size="17" />{{ scheduleExportError }}</div>
-          <div ref="schedulePreviewRef" class="schedule-table-preview"><ScheduleTable :identity="scheduleIdentity" :rows="scheduleRows" :term-label="scheduleTermLabel" :generated-date="generatedDate" /></div>
+          <div ref="schedulePreviewRef" class="schedule-table-preview"><ScheduleTable :identity="scheduleIdentity" :rows="scheduleRows" :term-label="scheduleTermLabel" :generated-date="generatedDate" :deletable="true" @remove="removeScheduleEntry" /></div>
         </div>
       </div>
     </Teleport>
